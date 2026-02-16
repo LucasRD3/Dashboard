@@ -4,11 +4,33 @@ const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const cloudinary = require('cloudinary').v2;
+const multer = require('multer');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
 const app = express();
 
+// Configurações de Ambiente
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
+
+// Configuração Cloudinary
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// Configuração do Multer para Cloudinary
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'comprovantes',
+        allowed_formats: ['jpg', 'png', 'pdf', 'jpeg'],
+        transformation: [{ width: 1000, crop: "limit" }] // Redimensiona para economizar espaço
+    },
+});
+const upload = multer({ storage: storage });
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -36,7 +58,8 @@ const TransacaoSchema = new mongoose.Schema({
     descricao: String,
     valor: Number,
     tipo: String,
-    data: Date
+    data: Date,
+    comprovanteUrl: String // Novo campo para o link da foto
 });
 
 const MembroSchema = new mongoose.Schema({
@@ -147,7 +170,7 @@ app.delete('/api/membros/:id', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Erro ao excluir membro" }); }
 });
 
-// NOVO: Histórico Completo do Membro (Todos os tempos)
+// Histórico Completo do Membro
 app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
     try {
         const nomeMembro = req.params.nome;
@@ -184,19 +207,25 @@ app.get('/api/transacoes', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Erro ao buscar" }); }
 });
 
-app.post('/api/transacoes', verificarToken, async (req, res) => {
+// Rota modificada para aceitar arquivo
+app.post('/api/transacoes', verificarToken, upload.single('comprovante'), async (req, res) => {
     try {
         const dataObj = new Date(req.body.dataManual);
         const ModeloPasta = getModelTransacao(dataObj.getUTCFullYear(), dataObj.getUTCMonth());
+        
         const nova = new ModeloPasta({
             descricao: req.body.descricao,
             valor: parseFloat(req.body.valor),
             tipo: req.body.tipo,
-            data: dataObj
+            data: dataObj,
+            comprovanteUrl: req.file ? req.file.path : null // Salva a URL do Cloudinary
         });
+        
         await nova.save();
         res.status(201).json(nova);
-    } catch (err) { res.status(500).json({ error: "Erro ao salvar" }); }
+    } catch (err) { 
+        res.status(500).json({ error: "Erro ao salvar transação com comprovante" }); 
+    }
 });
 
 app.put('/api/transacoes/:id', verificarToken, async (req, res) => {
@@ -221,6 +250,9 @@ app.delete('/api/transacoes/:id', verificarToken, async (req, res) => {
     try {
         const { ano, mes } = req.query;
         const ModeloPasta = getModelTransacao(ano, mes);
+        
+        // Opcional: Deletar imagem do Cloudinary aqui se necessário
+        
         await ModeloPasta.findByIdAndDelete(req.params.id);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: "Erro ao excluir" }); }
