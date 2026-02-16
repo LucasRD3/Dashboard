@@ -6,26 +6,27 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
 const app = express();
-const SECRET_KEY = process.env.SECRET_KEY || "sua_chave_secreta_aqui"; 
+
+// Chaves vindas das Environment Variables do Vercel
+const SECRET_KEY = process.env.SECRET_KEY || "sua_chave_secreta_padrao"; 
 const MONGO_URI = process.env.MONGO_URI;
 
 app.use(cors());
 app.use(bodyParser.json());
 
-// Conexão com tratamento para Serverless
+// Gestão de ligação para Serverless
 let isConnected = false;
 const connectDB = async () => {
     if (isConnected) return;
     try {
         await mongoose.connect(MONGO_URI);
         isConnected = true;
-        console.log("Conectado ao MongoDB");
+        console.log("Conectado ao MongoDB Atlas");
     } catch (err) {
-        console.error("Erro MongoDB:", err);
+        console.error("Erro ao conectar ao MongoDB:", err);
     }
 };
 
-// Middleware para conectar ao banco em cada requisição (necessário em Serverless)
 app.use(async (req, res, next) => {
     await connectDB();
     next();
@@ -47,7 +48,7 @@ const UserSchema = new mongoose.Schema({
 const Transacao = mongoose.models.Transacao || mongoose.model('Transacao', TransacaoSchema);
 const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
-// Middleware para verificar Token
+// Middleware de Token
 const verificarToken = (req, res, next) => {
     const token = req.headers['authorization'];
     if (!token) return res.status(403).json({ error: "Token não fornecido" });
@@ -59,20 +60,16 @@ const verificarToken = (req, res, next) => {
     });
 };
 
-// Rota de Ping
 app.get('/api/ping', (req, res) => {
-    res.json({ status: "online", message: "Servidor Vercel Ativo" });
+    res.json({ status: "online", message: "Backend Vercel Ativo" });
 });
 
-// Rota de Login
 app.post('/api/login', async (req, res) => {
     const { usuario, senha } = req.body;
-
     if (usuario === "IADEV" && senha === "1234") {
         const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
         return res.json({ auth: true, token });
     }
-
     try {
         const user = await User.findOne({ usuario });
         if (user && await bcrypt.compare(senha, user.senha)) {
@@ -85,7 +82,6 @@ app.post('/api/login', async (req, res) => {
     res.status(401).json({ error: "Usuário ou senha inválidos" });
 });
 
-// Gestão de Usuários
 app.get('/api/usuarios', verificarToken, async (req, res) => {
     try {
         const usuarios = await User.find({}, 'usuario');
@@ -128,7 +124,6 @@ app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
     }
 });
 
-// Rotas de Transações
 app.get('/api/transacoes', verificarToken, async (req, res) => {
     try {
         const transacoes = await Transacao.find();
