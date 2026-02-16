@@ -90,17 +90,16 @@ app.post('/api/login', async (req, res) => {
     res.status(401).json({ error: "Credenciais inválidas" });
 });
 
+// Rota de Upload corrigida para evitar erro de cota e ReferenceError
 app.post('/api/upload', verificarToken, upload.single('file'), async (req, res) => {
+    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
     try {
         if (!req.file) return res.status(400).json({ error: "Nenhum arquivo" });
-        
-        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-        if (!folderId) return res.status(500).json({ error: "Variável GOOGLE_DRIVE_FOLDER_ID ausente." });
+        if (!folderId) throw new Error("GOOGLE_DRIVE_FOLDER_ID não definida");
 
         const bufferStream = new stream.PassThrough();
         bufferStream.end(req.file.buffer);
 
-        // Upload corrigido para herdar espaço da conta pessoal
         const response = await drive.files.create({
             requestBody: {
                 name: `comprovante_${Date.now()}_${req.file.originalname}`,
@@ -111,29 +110,19 @@ app.post('/api/upload', verificarToken, upload.single('file'), async (req, res) 
                 body: bufferStream
             },
             fields: 'id, webViewLink',
-            // Força o reconhecimento de permissões da pasta compartilhada
-            supportsAllDrives: true,
-            keepRevisionForever: false
+            supportsAllDrives: true // Permite interagir com a pasta compartilhada
         });
 
-        // Tenta liberar acesso de leitura para o link funcionar no app
-        try {
-            await drive.permissions.create({
-                fileId: response.data.id,
-                requestBody: {
-                    role: 'reader',
-                    type: 'anyone'
-                },
-                supportsAllDrives: true
-            });
-        } catch (permErr) {
-            console.warn("Não foi possível definir permissão pública, mas o arquivo foi salvo.");
-        }
+        await drive.permissions.create({
+            fileId: response.data.id,
+            requestBody: { role: 'reader', type: 'anyone' },
+            supportsAllDrives: true
+        });
 
         res.json({ link: response.data.webViewLink });
     } catch (err) {
         console.error("Erro no upload Drive:", err.message);
-        res.status(500).json({ error: `Erro de Cota: Verifique se a pasta ${folderId} foi compartilhada com o e-mail da conta de serviço como EDITOR.` });
+        res.status(500).json({ error: `Erro no Drive: ${err.message}. Pasta Alvo: ${folderId || 'Não definida'}` });
     }
 });
 
