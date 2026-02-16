@@ -10,21 +10,24 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
 const app = express();
 
+// Configurações de Ambiente
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
+// Configuração Cloudinary
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Configuração do Multer para Cloudinary
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
         folder: 'comprovantes',
         allowed_formats: ['jpg', 'png', 'pdf', 'jpeg'],
-        transformation: [{ width: 1000, crop: "limit", quality: "auto" }]
+        transformation: [{ width: 1000, crop: "limit" }] // Redimensiona para economizar espaço
     },
 });
 const upload = multer({ storage: storage });
@@ -36,11 +39,12 @@ let isConnected = false;
 const connectDB = async () => {
     if (isConnected) return;
     try {
-        await mongoose.connect(MONGO_URI, { maxPoolSize: 10 });
+        if (!MONGO_URI) throw new Error("MONGO_URI não definida no Vercel");
+        await mongoose.connect(MONGO_URI);
         isConnected = true;
-        console.log("Conectado ao MongoDB");
+        console.log("Conectado ao MongoDB Atlas");
     } catch (err) {
-        console.error("Erro MongoDB:", err.message);
+        console.error("Erro ao conectar ao MongoDB:", err.message);
     }
 };
 
@@ -49,12 +53,13 @@ app.use(async (req, res, next) => {
     next();
 });
 
+// Esquemas
 const TransacaoSchema = new mongoose.Schema({
-    descricao: { type: String, index: true },
+    descricao: String,
     valor: Number,
     tipo: String,
-    data: { type: Date, index: true },
-    comprovanteUrl: String
+    data: Date,
+    comprovanteUrl: String // Novo campo para o link da foto
 });
 
 const MembroSchema = new mongoose.Schema({
@@ -85,7 +90,9 @@ const verificarToken = (req, res, next) => {
     });
 };
 
-app.get('/api/ping', (req, res) => res.json({ status: "online" }));
+app.get('/api/ping', (req, res) => {
+    res.json({ status: "online", mongodb: isConnected });
+});
 
 app.post('/api/login', async (req, res) => {
     const { usuario, senha } = req.body;
@@ -94,94 +101,175 @@ app.post('/api/login', async (req, res) => {
         return res.json({ auth: true, token });
     }
     try {
-        const user = await User.findOne({ usuario }).lean();
+        const user = await User.findOne({ usuario });
         if (user && await bcrypt.compare(senha, user.senha)) {
             const token = jwt.sign({ id: user._id }, SECRET_KEY, { expiresIn: '24h' });
             return res.json({ auth: true, token });
         }
-    } catch (err) { res.status(500).json({ error: "Erro interno" }); }
-    res.status(401).json({ error: "Credenciais inválidas" });
+    } catch (err) {
+        return res.status(500).json({ error: "Erro interno" });
+    }
+    res.status(401).json({ error: "Usuário ou senha inválidos" });
 });
 
+// GESTÃO DE USUÁRIOS
 app.get('/api/usuarios', verificarToken, async (req, res) => {
-    const usuarios = await User.find({}, 'usuario').lean();
-    res.json(usuarios);
+    try {
+        const usuarios = await User.find({}, 'usuario');
+        res.json(usuarios);
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar usuários" }); }
 });
 
 app.post('/api/usuarios', verificarToken, async (req, res) => {
-    const { usuario, senha } = req.body;
-    const hashedSenha = await bcrypt.hash(senha, 10);
-    await new User({ usuario, senha: hashedSenha }).save();
-    res.status(201).json({ message: "OK" });
+    try {
+        const { usuario, senha } = req.body;
+        const salt = await bcrypt.genSalt(10);
+        const hashedSenha = await bcrypt.hash(senha, salt);
+        const novoUsuario = new User({ usuario, senha: hashedSenha });
+        await novoUsuario.save();
+        res.status(201).json({ message: "Usuário criado" });
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar usuário" }); }
+});
+
+app.put('/api/usuarios/:id', verificarToken, async (req, res) => {
+    try {
+        const salt = await bcrypt.genSalt(10);
+        const hashedSenha = await bcrypt.hash(req.body.novaSenha, salt);
+        await User.findByIdAndUpdate(req.params.id, { senha: hashedSenha });
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: "Erro ao atualizar senha" }); }
 });
 
 app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ success: true });
+    try {
+        await User.findByIdAndDelete(req.params.id);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: "Erro ao excluir usuário" }); }
 });
 
+// GESTÃO DE MEMBROS
 app.get('/api/membros', verificarToken, async (req, res) => {
-    const membros = await Membro.find().sort({ nome: 1 }).lean();
-    res.json(membros);
+    try {
+        const membros = await Membro.find().sort({ nome: 1 });
+        res.json(membros);
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar membros" }); }
 });
 
 app.post('/api/membros', verificarToken, async (req, res) => {
-    const novo = await new Membro({ nome: req.body.nome }).save();
-    res.status(201).json(novo);
+    try {
+        const novo = new Membro({ nome: req.body.nome });
+        await novo.save();
+        res.status(201).json(novo);
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar membro" }); }
 });
 
 app.delete('/api/membros/:id', verificarToken, async (req, res) => {
-    await Membro.findByIdAndDelete(req.params.id);
-    res.json({ success: true });
+    try {
+        await Membro.findByIdAndDelete(req.params.id);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: "Erro ao excluir membro" }); }
 });
 
+// Histórico Completo do Membro
 app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
     try {
         const nomeMembro = req.params.nome;
         const collections = await mongoose.connection.db.listCollections().toArray();
-        const colecoesData = collections.map(c => c.name).filter(n => /^\d{4}-\d{2}$/.test(n));
+        const colecoesData = collections
+            .map(c => c.name)
+            .filter(name => /^\d{4}-\d{2}$/.test(name));
 
-        // Busca em paralelo para performance
-        const buscaPromises = colecoesData.map(nome => {
-            const Modelo = mongoose.models[nome] || mongoose.model(nome, TransacaoSchema, nome);
-            return Modelo.find({ descricao: { $regex: nomeMembro, $options: 'i' } }).lean();
-        });
+        let historicoCompleto = [];
 
-        const resultados = await Promise.all(buscaPromises);
-        const historico = resultados.flat().sort((a, b) => new Date(b.data) - new Date(a.data));
-        res.json(historico);
-    } catch (err) { res.status(500).json({ error: "Erro busca" }); }
+        for (const nomeColecao of colecoesData) {
+            const Modelo = mongoose.models[nomeColecao] || mongoose.model(nomeColecao, TransacaoSchema, nomeColecao);
+            const transacoes = await Modelo.find({
+                descricao: { $regex: nomeMembro, $options: 'i' }
+            });
+            historicoCompleto = historicoCompleto.concat(transacoes);
+        }
+
+        historicoCompleto.sort((a, b) => new Date(b.data) - new Date(a.data));
+        res.json(historicoCompleto);
+    } catch (err) {
+        res.status(500).json({ error: "Erro ao buscar ficha do membro" });
+    }
 });
 
+// GESTÃO DE TRANSAÇÕES
 app.get('/api/transacoes', verificarToken, async (req, res) => {
-    const { ano, mes } = req.query;
-    if (!ano || !mes) return res.json([]);
-    const Modelo = getModelTransacao(ano, mes);
-    const transacoes = await Modelo.find().sort({ data: -1 }).lean();
-    res.json(transacoes);
+    try {
+        const { ano, mes } = req.query;
+        if (!ano || !mes) return res.json([]);
+        const ModeloPasta = getModelTransacao(ano, mes);
+        const transacoes = await ModeloPasta.find().sort({ data: -1 });
+        res.json(transacoes);
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar" }); }
 });
 
+// Rota modificada para aceitar arquivo
 app.post('/api/transacoes', verificarToken, upload.single('comprovante'), async (req, res) => {
-    const dataObj = new Date(req.body.dataManual);
-    const Modelo = getModelTransacao(dataObj.getUTCFullYear(), dataObj.getUTCMonth());
-    const nova = await new Modelo({
-        ...req.body,
-        valor: parseFloat(req.body.valor),
-        data: dataObj,
-        comprovanteUrl: req.file ? req.file.path : null
-    }).save();
-    res.status(201).json(nova);
+    try {
+        const dataObj = new Date(req.body.dataManual);
+        const ModeloPasta = getModelTransacao(dataObj.getUTCFullYear(), dataObj.getUTCMonth());
+        
+        const nova = new ModeloPasta({
+            descricao: req.body.descricao,
+            valor: parseFloat(req.body.valor),
+            tipo: req.body.tipo,
+            data: dataObj,
+            comprovanteUrl: req.file ? req.file.path : null // Salva a URL do Cloudinary
+        });
+        
+        await nova.save();
+        res.status(201).json(nova);
+    } catch (err) { 
+        res.status(500).json({ error: "Erro ao salvar transação com comprovante" }); 
+    }
+});
+
+app.put('/api/transacoes/:id', verificarToken, async (req, res) => {
+    try {
+        const { ano, mes } = req.query;
+        const ModeloPasta = getModelTransacao(ano, mes);
+        const atualizada = await ModeloPasta.findByIdAndUpdate(
+            req.params.id,
+            {
+                descricao: req.body.descricao,
+                valor: parseFloat(req.body.valor),
+                tipo: req.body.tipo,
+                data: new Date(req.body.dataManual)
+            },
+            { new: true }
+        );
+        res.json(atualizada);
+    } catch (err) { res.status(500).json({ error: "Erro ao atualizar" }); }
 });
 
 app.delete('/api/transacoes/:id', verificarToken, async (req, res) => {
-    const { ano, mes } = req.query;
-    const Modelo = getModelTransacao(ano, mes);
-    const transacao = await Modelo.findByIdAndDelete(req.params.id);
-    if (transacao?.comprovanteUrl) {
-        const publicId = `comprovantes/${transacao.comprovanteUrl.split('/').pop().split('.')[0]}`;
-        await cloudinary.uploader.destroy(publicId);
+    try {
+        const { ano, mes } = req.query;
+        const ModeloPasta = getModelTransacao(ano, mes);
+        
+        // Busca a transação antes de deletar para verificar se tem imagem
+        const transacao = await ModeloPasta.findById(req.params.id);
+        
+        if (transacao && transacao.comprovanteUrl) {
+            // Extrai o public_id da URL do Cloudinary (ex: comprovantes/nome_do_arquivo)
+            const urlParts = transacao.comprovanteUrl.split('/');
+            const fileNameWithExtension = urlParts[urlParts.length - 1];
+            const publicId = `comprovantes/${fileNameWithExtension.split('.')[0]}`;
+            
+            // Deleta a imagem do Cloudinary
+            await cloudinary.uploader.destroy(publicId);
+        }
+        
+        await ModeloPasta.findByIdAndDelete(req.params.id);
+        res.json({ success: true });
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: "Erro ao excluir transação e imagem" }); 
     }
-    res.json({ success: true });
 });
 
 module.exports = app;
