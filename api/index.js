@@ -36,12 +36,12 @@ app.use(async (req, res, next) => {
     next();
 });
 
-// Esquemas de Dados
+// Esquemas de Dados - Atualizado para Date e com Index
 const TransacaoSchema = new mongoose.Schema({
     descricao: String,
     valor: Number,
     tipo: String,
-    data: String
+    data: { type: Date, index: true } // Organização nativa por data
 });
 
 const UserSchema = new mongoose.Schema({
@@ -68,7 +68,6 @@ const verificarToken = (req, res, next) => {
 
 // --- ROTAS DA API ---
 
-// Rota alterada para exibir apenas o texto solicitado
 app.get('/api', (req, res) => {
     res.send("IADEV API");
 });
@@ -80,7 +79,6 @@ app.get('/api/ping', (req, res) => {
 app.post('/api/login', async (req, res) => {
     const { usuario, senha } = req.body;
     
-    // Login Mestre
     if (usuario === "IADEV" && senha === "1234") {
         const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
         return res.json({ auth: true, token });
@@ -146,7 +144,8 @@ app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
 
 app.get('/api/transacoes', verificarToken, async (req, res) => {
     try {
-        const transacoes = await Transacao.find();
+        // Retorna ordenado por data descendente para facilitar a listagem
+        const transacoes = await Transacao.find().sort({ data: -1 });
         res.json(transacoes);
     } catch (err) {
         res.status(500).json({ error: "Erro ao buscar transações" });
@@ -159,7 +158,7 @@ app.post('/api/transacoes', verificarToken, async (req, res) => {
             descricao: req.body.descricao,
             valor: parseFloat(req.body.valor),
             tipo: req.body.tipo,
-            data: req.body.dataManual
+            data: new Date(req.body.dataManual) // Converte string para Date
         });
         await novaTransacao.save();
         res.status(201).json(novaTransacao);
@@ -176,7 +175,7 @@ app.put('/api/transacoes/:id', verificarToken, async (req, res) => {
                 descricao: req.body.descricao,
                 valor: parseFloat(req.body.valor),
                 tipo: req.body.tipo,
-                data: req.body.dataManual
+                data: new Date(req.body.dataManual) // Converte string para Date
             },
             { new: true }
         );
