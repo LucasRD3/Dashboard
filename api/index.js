@@ -14,6 +14,7 @@ const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } });
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
+// Configuração Google Drive com correção de decodificação de chave
 let drive;
 try {
     let privateKey = process.env.GOOGLE_PRIVATE_KEY;
@@ -38,6 +39,7 @@ let isConnected = false;
 const connectDB = async () => {
     if (isConnected) return;
     try {
+        if (!MONGO_URI) throw new Error("MONGO_URI não definida");
         await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 5000 });
         isConnected = true;
     } catch (err) {
@@ -84,7 +86,9 @@ const verificarToken = (req, res, next) => {
     });
 };
 
-app.get('/api/ping', (req, res) => res.json({ status: "online", mongodb: isConnected, drive_ready: !!drive }));
+app.get('/api/ping', (req, res) => {
+    res.json({ status: "online", mongodb: isConnected, drive_ready: !!drive });
+});
 
 app.post('/api/login', async (req, res) => {
     const { usuario, senha } = req.body;
@@ -98,23 +102,10 @@ app.post('/api/login', async (req, res) => {
             const token = jwt.sign({ id: user._id }, SECRET_KEY, { expiresIn: '24h' });
             return res.json({ auth: true, token });
         }
-    } catch (err) { return res.status(500).json({ error: "Erro interno" }); }
+    } catch (err) {
+        return res.status(500).json({ error: "Erro interno" });
+    }
     res.status(401).json({ error: "Usuário ou senha inválidos" });
-});
-
-app.get('/api/membros', verificarToken, async (req, res) => {
-    try {
-        const membros = await Membro.find().sort({ nome: 1 });
-        res.json(membros);
-    } catch (err) { res.status(500).json({ error: "Erro ao buscar membros" }); }
-});
-
-app.post('/api/membros', verificarToken, async (req, res) => {
-    try {
-        const novo = new Membro({ nome: req.body.nome });
-        await novo.save();
-        res.status(201).json(novo);
-    } catch (err) { res.status(500).json({ error: "Erro ao salvar membro" }); }
 });
 
 app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
@@ -135,7 +126,9 @@ app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
         }
         historicoCompleto.sort((a, b) => new Date(b.data) - new Date(a.data));
         res.json(historicoCompleto);
-    } catch (err) { res.status(500).json({ error: "Erro ao buscar histórico" }); }
+    } catch (err) {
+        res.status(500).json({ error: "Erro ao buscar ficha do membro" });
+    }
 });
 
 app.post('/api/transacoes', verificarToken, upload.single('foto'), async (req, res) => {
@@ -144,12 +137,13 @@ app.post('/api/transacoes', verificarToken, upload.single('foto'), async (req, r
 
     try {
         let comprovanteId = "";
+        
         if (req.file && drive) {
             const bufferStream = new Readable();
             bufferStream.push(req.file.buffer);
             bufferStream.push(null);
-            
-            // Correção para o erro de cota: Usar a permissão da pasta pai
+
+            // Correção: Adicionado supportsAllDrives para usar o espaço da pasta pai
             const driveRes = await drive.files.create({
                 requestBody: {
                     name: `comprovante-${Date.now()}.jpg`,
@@ -157,7 +151,7 @@ app.post('/api/transacoes', verificarToken, upload.single('foto'), async (req, r
                 },
                 media: { mimeType: req.file.mimetype, body: bufferStream },
                 fields: 'id',
-                supportsAllDrives: true // Permite usar o espaço da pasta compartilhada
+                supportsAllDrives: true 
             }, { signal: controller.signal });
             comprovanteId = driveRes.data.id;
         }
@@ -176,17 +170,41 @@ app.post('/api/transacoes', verificarToken, upload.single('foto'), async (req, r
         res.status(201).json(nova);
     } catch (err) {
         clearTimeout(timeoutId);
-        console.error("Erro no upload/salvamento:", err.message);
+        console.error("Erro na operação:", err.message);
         res.status(500).json({ error: "Falha na operação", details: err.message });
     }
 });
 
 app.get('/api/transacoes', verificarToken, async (req, res) => {
-    const { ano, mes } = req.query;
-    if (!ano || !mes) return res.json([]);
-    const ModeloPasta = getModelTransacao(ano, mes);
-    const transacoes = await ModeloPasta.find().sort({ data: -1 });
-    res.json(transacoes);
+    try {
+        const { ano, mes } = req.query;
+        if (!ano || !mes) return res.json([]);
+        const ModeloPasta = getModelTransacao(ano, mes);
+        const transacoes = await ModeloPasta.find().sort({ data: -1 });
+        res.json(transacoes);
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar" }); }
+});
+
+app.get('/api/membros', verificarToken, async (req, res) => {
+    try {
+        const membros = await Membro.find().sort({ nome: 1 });
+        res.json(membros);
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar membros" }); }
+});
+
+app.post('/api/membros', verificarToken, async (req, res) => {
+    try {
+        const novo = new Membro({ nome: req.body.nome });
+        await novo.save();
+        res.status(201).json(novo);
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar membro" }); }
+});
+
+app.delete('/api/membros/:id', verificarToken, async (req, res) => {
+    try {
+        await Membro.findByIdAndDelete(req.params.id);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: "Erro ao excluir" }); }
 });
 
 module.exports = app;
