@@ -14,11 +14,11 @@ const upload = multer({ storage: multer.memoryStorage() });
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
-// Configuração Google Drive com os dados fornecidos
+// Configuração Google Drive
 const auth = new google.auth.JWT(
-    "iadev-633@deft-racer-474802-u0.iam.gserviceaccount.com", // client_email fornecido
+    "iadev-633@deft-racer-474802-u0.iam.gserviceaccount.com",
     null,
-    "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCseXhWRWJzQ57n\npXyj1zuBgoxKdTfCZc2ueVCXytqj6s6sWuTeuL0McbKFw6WGtogGPkSkJCIX4eeM\n9XdGh0IHqFGdyz2GgQXJiLSKU5CFdWLCUmqIW8PNHBUctEf1CaZ+9ZXYxHP5wz/X\nmYLDofHBqyrwiuKOLcl6h4qQ2LJ3AhuIQ3nPGhQ4gatnI1QaT2SJBhcIop9dPvBd\nXCY+VH60TeyppunBTS94lbBV3/EYzT9fOORGfyeFWceeV4SoJL3pUoydnDhy/dhx\najRQiMVJrWHB7Uz57nzcIq4y2YjU1iyraQ7c0w9wvUH4sx7aQvZ8NxTWTWzuBuRq\nWdidfpDXAgMBAAECggEAJ0U5GxuNQQVihwftCzkUeXaKDuIFoiOf41wH96fehHgQ\nOrovZm7VzKGOrlpPtA6XhiRjaKQ5hwqOuE+jqtFdPXUbsDv4dEmoUazovp4sR9bk\nd65gR0/tkyQTwodh4u8hk8LDLan9Zh8IyERRu82ByED68+4Li6ftOhLmf/h3GhVn\nADt+paHRpZNrmKOIXPLp2+W9iPJ1zYuLUWDIhCTXNGzhDTo8Sg0sD6CJFwEXtiLY\nuvF6kkRXaX/kF/OIUlvC6mq/c8ouGEpeF8NG4msXdyaJtSPyaaLImXLm/R333vIA\nFQqfynpCO4+o7jxLylfx6sUaHUdpCqZNf8pl9MwNcQKBgQDajqYaaBRJbwsv4NKL\cuQgEPt8RS26a1zAEZqdfRuljOs1BMyRkwYBx+PAwwIkhtnO4MHL08ugLMqdo0W1\nYtpDWDfDV7w5jLVu82wMdCloheDrx4Yw93/f1ZHrFECEEziGRaPNmGwJxOj9CoAI\n4pfmSJ+4WnxzhlJps749RaEfjQKBgQDKBcCqFG0eANul1H4gcxJaEkeWFdbXbQol\npLmBztIPuN2zHOwF9wLT2Sw167JHjoKbhkjiyfC/EinZLeRF9Pc3czDIRMiHR9uI\nyEEWOtVLOjVfGQPI2E+gNnBdSCrK0oiiMZH6mbNahvruH58q2jLu8PC6bDZtuI4D\naOS6wJWW8wKBgEqT4JQkLb/9F0koI1AYTUWv5dC63ma9WfHkT+krlrKACoaV86Q9\nEhCrf8j4AhQqu8n/IcIGrHYksqLl4tSJPcc7JBQRLRZKMGMCxzzcqoCTJnPuKpks\n60Ka4ubfi0BGOsR+oO139G3E9mfaHGRrxb97ypyiq9LT4+1Tuze3OcrFAoGBAJnF\nXy0WdygLRyUmZQqWDDX7C/o1jV5UZRDaHUms/z9wW2/mZ9Dyf3h5KamxSfYlh0yS\nHhBh3ZnSXYAt6j9Fgpb2Wv9VO72c+IFYzBH7njawi8di5vqNi65LQaP/NnNDZTTv\nvkmdjGMvsvhloWWgyHwPcWy0yYkinRYDVXbA+Bv5AoGAbXG15/WMjIU8CwWGe3lS\n/8UiZT9KXaxe4Dx0pxTUtVuOEY6JFMOpQgCyu0TszXI3xEL/i7zXZqRzeHVpOfZq\nSKzJOzPdgzYAao4R7bxI3KjK9CT4uZGSl0OEcfHMNiAJEfehSWjCELHAqNUW9aGI\nu5rAAdD4/lhotjIEW1E1hgg=\n-----END PRIVATE KEY-----\n", // private_key fornecida
+    "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCseXhWRWJzQ57n\npXyj1zuBgoxKdTfCZc2ueVCXytqj6s6sWuTeuL0McbKFw6WGtogGPkSkJCIX4eeM\n9XdGh0IHqFGdyz2GgQXJiLSKU5CFdWLCUmqIW8PNHBUctEf1CaZ+9ZXYxHP5wz/X\nmYLDofHBqyrwiuKOLcl6h4qQ2LJ3AhuIQ3nPGhQ4gatnI1QaT2SJBhcIop9dPvBd\nXCY+VH60TeyppunBTS94lbBV3/EYzT9fOORGfyeFWceeV4SoJL3pUoydnDhy/dhx\najRQiMVJrWHB7Uz57nzcIq4y2YjU1iyraQ7c0w9wvUH4sx7aQvZ8NxTWTWzuBuRq\nWdidfpDXAgMBAAECggEAJ0U5GxuNQQVihwftCzkUeXaKDuIFoiOf41wH96fehHgQ\nOrovZm7VzKGOrlpPtA6XhiRjaKQ5hwqOuE+jqtFdPXUbsDv4dEmoUazovp4sR9bk\nd65gR0/tkyQTwodh4u8hk8LDLan9Zh8IyERRu82ByED68+4Li6ftOhLmf/h3GhVn\nADt+paHRpZNrmKOIXPLp2+W9iPJ1zYuLUWDIhCTXNGzhDTo8Sg0sD6CJFwEXtiLY\nuvF6kkRXaX/kF/OIUlvC6mq/c8ouGEpeF8NG4msXdyaJtSPyaaLImXLm/R333vIA\nFQqfynpCO4+o7jxLylfx6sUaHUdpCqZNf8pl9MwNcQKBgQDajqYaaBRJbwsv4NKL\cuQgEPt8RS26a1zAEZqdfRuljOs1BMyRkwYBx+PAwwIkhtnO4MHL08ugLMqdo0W1\nYtpDWDfDV7w5jLVu82wMdCloheDrx4Yw93/f1ZHrFECEEziGRaPNmGwJxOj9CoAI\n4pfmSJ+4WnxzhlJps749RaEfjQKBgQDKBcCqFG0eANul1H4gcxJaEkeWFdbXbQol\npLmBztIPuN2zHOwF9wLT2Sw167JHjoKbhkjiyfC/EinZLeRF9Pc3czDIRMiHR9uI\nyEEWOtVLOjVfGQPI2E+gNnBdSCrK0oiiMZH6mbNahvruH58q2jLu8PC6bDZtuI4D\naOS6wJWW8wKBgEqT4JQkLb/9F0koI1AYTUWv5dC63ma9WfHkT+krlrKACoaV86Q9\nEhCrf8j4AhQqu8n/IcIGrHYksqLl4tSJPcc7JBQRLRZKMGMCxzzcqoCTJnPuKpks\n60Ka4ubfi0BGOsR+oO139G3E9mfaHGRrxb97ypyiq9LT4+1Tuze3OcrFAoGBAJnF\nXy0WdygLRyUmZQqWDDX7C/o1jV5UZRDaHUms/z9wW2/mZ9Dyf3h5KamxSfYlh0yS\nHhBh3ZnSXYAt6j9Fgpb2Wv9VO72c+IFYzBH7njawi8di5vqNi65LQaP/NnNDZTTv\nvkmdjGMvsvhloWWgyHwPcWy0yYkinRYDVXbA+Bv5AoGAbXG15/WMjIU8CwWGe3lS\n/8UiZT9KXaxe4Dx0pxTUtVuOEY6JFMOpQgCyu0TszXI3xEL/i7zXZqRzeHVpOfZq\nSKzJOzPdgzYAao4R7bxI3KjK9CT4uZGSl0OEcfHMNiAJEfehSWjCELHAqNUW9aGI\nu5rAAdD4/lhotjIEW1E1hgg=\n-----END PRIVATE KEY-----\n",
     ['https://www.googleapis.com/auth/drive.file']
 );
 const drive = google.drive({ version: 'v3', auth });
@@ -90,18 +90,20 @@ app.post('/api/login', async (req, res) => {
     res.status(401).json({ error: "Credenciais inválidas" });
 });
 
-// Rota de Upload para o Drive
 app.post('/api/upload', verificarToken, upload.single('file'), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ error: "Nenhum arquivo" });
+        if (!req.file) return res.status(400).json({ error: "Nenhum arquivo enviado." });
         
+        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+        if (!folderId) throw new Error("ID da pasta do Google Drive não configurado no servidor.");
+
         const bufferStream = new stream.PassThrough();
         bufferStream.end(req.file.buffer);
 
         const response = await drive.files.create({
             requestBody: {
                 name: `comprovante_${Date.now()}_${req.file.originalname}`,
-                parents: [process.env.GOOGLE_DRIVE_FOLDER_ID]
+                parents: [folderId]
             },
             media: {
                 mimeType: req.file.mimetype,
@@ -110,13 +112,22 @@ app.post('/api/upload', verificarToken, upload.single('file'), async (req, res) 
             fields: 'id, webViewLink'
         });
 
+        // Tornar o arquivo visível para qualquer pessoa com o link (opcional, mas ajuda a visualizar no dashboard)
+        await drive.permissions.create({
+            fileId: response.data.id,
+            requestBody: {
+                role: 'reader',
+                type: 'anyone'
+            }
+        });
+
         res.json({ link: response.data.webViewLink });
     } catch (err) {
+        console.error("Erro no Upload:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
-// CRUD de Transações
 app.get('/api/transacoes', verificarToken, async (req, res) => {
     try {
         const { ano, mes } = req.query;
@@ -158,7 +169,6 @@ app.delete('/api/transacoes/:id', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Erro ao excluir" }); }
 });
 
-// Gestão de Membros e Usuários (Mantido conforme original)
 app.get('/api/usuarios', verificarToken, async (req, res) => {
     const usuarios = await User.find({}, 'usuario');
     res.json(usuarios);
