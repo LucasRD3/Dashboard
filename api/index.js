@@ -147,6 +147,32 @@ app.delete('/api/membros/:id', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Erro ao excluir membro" }); }
 });
 
+// NOVO: Histórico Completo do Membro (Todos os tempos)
+app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
+    try {
+        const nomeMembro = req.params.nome;
+        const collections = await mongoose.connection.db.listCollections().toArray();
+        const colecoesData = collections
+            .map(c => c.name)
+            .filter(name => /^\d{4}-\d{2}$/.test(name));
+
+        let historicoCompleto = [];
+
+        for (const nomeColecao of colecoesData) {
+            const Modelo = mongoose.models[nomeColecao] || mongoose.model(nomeColecao, TransacaoSchema, nomeColecao);
+            const transacoes = await Modelo.find({
+                descricao: { $regex: nomeMembro, $options: 'i' }
+            });
+            historicoCompleto = historicoCompleto.concat(transacoes);
+        }
+
+        historicoCompleto.sort((a, b) => new Date(b.data) - new Date(a.data));
+        res.json(historicoCompleto);
+    } catch (err) {
+        res.status(500).json({ error: "Erro ao buscar ficha do membro" });
+    }
+});
+
 // GESTÃO DE TRANSAÇÕES
 app.get('/api/transacoes', verificarToken, async (req, res) => {
     try {
