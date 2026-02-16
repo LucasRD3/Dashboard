@@ -251,11 +251,25 @@ app.delete('/api/transacoes/:id', verificarToken, async (req, res) => {
         const { ano, mes } = req.query;
         const ModeloPasta = getModelTransacao(ano, mes);
         
-        // Opcional: Deletar imagem do Cloudinary aqui se necessário
+        // Busca a transação antes de deletar para verificar se tem imagem
+        const transacao = await ModeloPasta.findById(req.params.id);
+        
+        if (transacao && transacao.comprovanteUrl) {
+            // Extrai o public_id da URL do Cloudinary (ex: comprovantes/nome_do_arquivo)
+            const urlParts = transacao.comprovanteUrl.split('/');
+            const fileNameWithExtension = urlParts[urlParts.length - 1];
+            const publicId = `comprovantes/${fileNameWithExtension.split('.')[0]}`;
+            
+            // Deleta a imagem do Cloudinary
+            await cloudinary.uploader.destroy(publicId);
+        }
         
         await ModeloPasta.findByIdAndDelete(req.params.id);
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: "Erro ao excluir" }); }
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: "Erro ao excluir transação e imagem" }); 
+    }
 });
 
 module.exports = app;
