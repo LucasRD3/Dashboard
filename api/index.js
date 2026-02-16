@@ -17,11 +17,8 @@ let isConnected = false;
 const connectDB = async () => {
     if (isConnected) return;
     try {
-        if (!MONGO_URI) throw new Error("MONGO_URI não definida");
-        await mongoose.connect(MONGO_URI, {
-            serverSelectionTimeoutMS: 10000,
-            family: 4 
-        });
+        if (!MONGO_URI) throw new Error("MONGO_URI não definida no Vercel");
+        await mongoose.connect(MONGO_URI);
         isConnected = true;
         console.log("Conectado ao MongoDB Atlas");
     } catch (err) {
@@ -34,23 +31,25 @@ app.use(async (req, res, next) => {
     next();
 });
 
-// Esquema com campos de agrupamento (Pastas Lógicas)
+// Esquema base para as transações
 const TransacaoSchema = new mongoose.Schema({
     descricao: String,
     valor: Number,
     tipo: String,
-    data: Date,
-    // Campos que funcionam como "pastas"
-    ano: { type: Number, index: true },
-    mes: { type: Number, index: true }
+    data: Date
 });
+
+// Função para obter o modelo da "pasta" (coleção) correta dinamicamente
+const getModelTransacao = (ano, mes) => {
+    // Define o nome da coleção como YYYY-MM (ex: 2026-02)
+    const nomeColecao = `${ano}-${String(parseInt(mes) + 1).padStart(2, '0')}`;
+    return mongoose.models[nomeColecao] || mongoose.model(nomeColecao, TransacaoSchema, nomeColecao);
+};
 
 const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
     usuario: { type: String, required: true, unique: true },
     senha: { type: String, required: true }
 }));
-
-const Transacao = mongoose.models.Transacao || mongoose.model('Transacao', TransacaoSchema);
 
 const verificarToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -63,6 +62,10 @@ const verificarToken = (req, res, next) => {
         next();
     });
 };
+
+app.get('/api/ping', (req, res) => {
+    res.json({ status: "online", mongodb: isConnected });
+});
 
 app.post('/api/login', async (req, res) => {
     const { usuario, senha } = req.body;
@@ -79,72 +82,95 @@ app.post('/api/login', async (req, res) => {
     } catch (err) {
         return res.status(500).json({ error: "Erro interno" });
     }
-    res.status(401).json({ error: "Inválido" });
+    res.status(401).json({ error: "Usuário ou senha inválidos" });
 });
 
-// GESTÃO DE TRANSAÇÕES ORGANIZADA
+// GESTÃO DE USUÁRIOS
+app.get('/api/usuarios', verificarToken, async (req, res) => {
+    try {
+        const usuarios = await User.find({}, 'usuario');
+        res.json(usuarios);
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar usuários" }); }
+});
+
+app.post('/api/usuarios', verificarToken, async (req, res) => {
+    try {
+        const { usuario, senha } = req.body;
+        const salt = await bcrypt.genSalt(10);
+        const hashedSenha = await bcrypt.hash(senha, salt);
+        const novoUsuario = new User({ usuario, senha: hashedSenha });
+        await novoUsuario.save();
+        res.status(201).json({ message: "Usuário criado" });
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar usuário" }); }
+});
+
+app.put('/api/usuarios/:id', verificarToken, async (req, res) => {
+    try {
+        const salt = await bcrypt.genSalt(10);
+        const hashedSenha = await bcrypt.hash(req.body.novaSenha, salt);
+        await User.findByIdAndUpdate(req.params.id, { senha: hashedSenha });
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: "Erro ao atualizar senha" }); }
+});
+
+app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
+    try {
+        await User.findByIdAndDelete(req.params.id);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: "Erro ao excluir usuário" }); }
+});
+
+// GESTÃO DE TRANSAÇÕES (COM PASTAS)
 app.get('/api/transacoes', verificarToken, async (req, res) => {
     try {
         const { ano, mes } = req.query;
-        let filtro = {};
-        
-        // Se o front enviar ano/mes, filtramos na "pasta" correta
-        if (ano) filtro.ano = parseInt(ano);
-        if (mes) filtro.mes = parseInt(mes);
-
-        const transacoes = await Transacao.find(filtro).sort({ data: -1 });
+        if (!ano || !mes) return res.json([]);
+        const ModeloPasta = getModelTransacao(ano, mes);
+        const transacoes = await ModeloPasta.find().sort({ data: -1 });
         res.json(transacoes);
-    } catch (err) {
-        res.status(500).json({ error: "Erro ao buscar" });
-    }
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar" }); }
 });
 
 app.post('/api/transacoes', verificarToken, async (req, res) => {
     try {
-        const dataObjeto = new Date(req.body.dataManual);
-        const novaTransacao = new Transacao({
+        const dataObj = new Date(req.body.dataManual);
+        const ModeloPasta = getModelTransacao(dataObj.getUTCFullYear(), dataObj.getUTCMonth());
+        const nova = new ModeloPasta({
             descricao: req.body.descricao,
             valor: parseFloat(req.body.valor),
             tipo: req.body.tipo,
-            data: dataObjeto,
-            ano: dataObjeto.getUTCFullYear(), // "Pasta" Ano
-            mes: dataObjeto.getUTCMonth()     // "Pasta" Mês
+            data: dataObj
         });
-        await novaTransacao.save();
-        res.status(201).json(novaTransacao);
-    } catch (err) {
-        res.status(500).json({ error: "Erro ao salvar" });
-    }
+        await nova.save();
+        res.status(201).json(nova);
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar" }); }
 });
 
 app.put('/api/transacoes/:id', verificarToken, async (req, res) => {
     try {
-        const dataObjeto = new Date(req.body.dataManual);
-        const atualizada = await Transacao.findByIdAndUpdate(
+        const { ano, mes } = req.query;
+        const ModeloPasta = getModelTransacao(ano, mes);
+        const atualizada = await ModeloPasta.findByIdAndUpdate(
             req.params.id,
             {
                 descricao: req.body.descricao,
                 valor: parseFloat(req.body.valor),
                 tipo: req.body.tipo,
-                data: dataObjeto,
-                ano: dataObjeto.getUTCFullYear(),
-                mes: dataObjeto.getUTCMonth()
+                data: new Date(req.body.dataManual)
             },
             { new: true }
         );
         res.json(atualizada);
-    } catch (err) {
-        res.status(500).json({ error: "Erro ao atualizar" });
-    }
+    } catch (err) { res.status(500).json({ error: "Erro ao atualizar" }); }
 });
 
 app.delete('/api/transacoes/:id', verificarToken, async (req, res) => {
     try {
-        await Transacao.findByIdAndDelete(req.params.id);
+        const { ano, mes } = req.query;
+        const ModeloPasta = getModelTransacao(ano, mes);
+        await ModeloPasta.findByIdAndDelete(req.params.id);
         res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: "Erro ao excluir" });
-    }
+    } catch (err) { res.status(500).json({ error: "Erro ao excluir" }); }
 });
 
 module.exports = app;
