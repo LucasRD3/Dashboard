@@ -31,7 +31,7 @@ app.use(async (req, res, next) => {
     next();
 });
 
-// Esquema base para as transações
+// Esquemas
 const TransacaoSchema = new mongoose.Schema({
     descricao: String,
     valor: Number,
@@ -39,9 +39,11 @@ const TransacaoSchema = new mongoose.Schema({
     data: Date
 });
 
-// Função para obter o modelo da "pasta" (coleção) correta dinamicamente
+const MembroSchema = new mongoose.Schema({
+    nome: { type: String, required: true, unique: true }
+});
+
 const getModelTransacao = (ano, mes) => {
-    // Define o nome da coleção como YYYY-MM (ex: 2026-02)
     const nomeColecao = `${ano}-${String(parseInt(mes) + 1).padStart(2, '0')}`;
     return mongoose.models[nomeColecao] || mongoose.model(nomeColecao, TransacaoSchema, nomeColecao);
 };
@@ -50,6 +52,8 @@ const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema(
     usuario: { type: String, required: true, unique: true },
     senha: { type: String, required: true }
 }));
+
+const Membro = mongoose.models.Membro || mongoose.model('Membro', MembroSchema);
 
 const verificarToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -120,7 +124,30 @@ app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Erro ao excluir usuário" }); }
 });
 
-// GESTÃO DE TRANSAÇÕES (COM PASTAS)
+// GESTÃO DE MEMBROS
+app.get('/api/membros', verificarToken, async (req, res) => {
+    try {
+        const membros = await Membro.find().sort({ nome: 1 });
+        res.json(membros);
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar membros" }); }
+});
+
+app.post('/api/membros', verificarToken, async (req, res) => {
+    try {
+        const novo = new Membro({ nome: req.body.nome });
+        await novo.save();
+        res.status(201).json(novo);
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar membro" }); }
+});
+
+app.delete('/api/membros/:id', verificarToken, async (req, res) => {
+    try {
+        await Membro.findByIdAndDelete(req.params.id);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: "Erro ao excluir membro" }); }
+});
+
+// GESTÃO DE TRANSAÇÕES
 app.get('/api/transacoes', verificarToken, async (req, res) => {
     try {
         const { ano, mes } = req.query;
