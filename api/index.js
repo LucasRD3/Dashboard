@@ -9,18 +9,15 @@ const multer = require('multer');
 const { Readable } = require('stream');
 
 const app = express();
-// Limite de 5MB para evitar timeouts excessivos na Vercel
 const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } }); 
 
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
-// Configuração Google Drive com tratamento de erro na chave
 let drive;
 try {
     let privateKey = process.env.GOOGLE_PRIVATE_KEY;
     if (privateKey) {
-        // Limpeza da chave para evitar erro de decodificação
         privateKey = privateKey.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n');
         const auth = new google.auth.JWT(
             process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -44,7 +41,7 @@ const connectDB = async () => {
         await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 5000 });
         isConnected = true;
     } catch (err) {
-        console.error("Erro ao conectar ao MongoDB:", err.message);
+        console.error("Erro MongoDB:", err.message);
     }
 };
 
@@ -53,7 +50,6 @@ app.use(async (req, res, next) => {
     next();
 });
 
-// Esquemas
 const TransacaoSchema = new mongoose.Schema({
     descricao: String, 
     valor: Number, 
@@ -88,9 +84,7 @@ const verificarToken = (req, res, next) => {
     });
 };
 
-// --- ROTAS DO SISTEMA ---
-
-app.get('/api/ping', (req, res) => res.json({ status: "online", mongodb: isConnected, drive: !!drive }));
+app.get('/api/ping', (req, res) => res.json({ status: "online", mongodb: isConnected, drive_ready: !!drive }));
 
 app.post('/api/login', async (req, res) => {
     const { usuario, senha } = req.body;
@@ -145,31 +139,27 @@ app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
 });
 
 app.post('/api/transacoes', verificarToken, upload.single('foto'), async (req, res) => {
-    // Aborta o upload se o Drive demorar mais que 7 segundos para evitar timeout da Vercel
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 7000); 
+    const timeoutId = setTimeout(() => controller.abort(), 8000); 
 
     try {
         let comprovanteId = "";
-        
         if (req.file && drive) {
-            try {
-                const bufferStream = new Readable();
-                bufferStream.push(req.file.buffer);
-                bufferStream.push(null);
-
-                const driveRes = await drive.files.create({
-                    requestBody: {
-                        name: `comprovante-${Date.now()}.jpg`,
-                        parents: [process.env.GOOGLE_DRIVE_FOLDER_ID]
-                    },
-                    media: { mimeType: req.file.mimetype, body: bufferStream },
-                    fields: 'id'
-                }, { signal: controller.signal });
-                comprovanteId = driveRes.data.id;
-            } catch (driveErr) {
-                console.warn("Upload do Drive ignorado devido a lentidão ou erro:", driveErr.message);
-            }
+            const bufferStream = new Readable();
+            bufferStream.push(req.file.buffer);
+            bufferStream.push(null);
+            
+            // Correção para o erro de cota: Usar a permissão da pasta pai
+            const driveRes = await drive.files.create({
+                requestBody: {
+                    name: `comprovante-${Date.now()}.jpg`,
+                    parents: [process.env.GOOGLE_DRIVE_FOLDER_ID]
+                },
+                media: { mimeType: req.file.mimetype, body: bufferStream },
+                fields: 'id',
+                supportsAllDrives: true // Permite usar o espaço da pasta compartilhada
+            }, { signal: controller.signal });
+            comprovanteId = driveRes.data.id;
         }
 
         const dataObj = new Date(req.body.dataManual);
@@ -181,25 +171,22 @@ app.post('/api/transacoes', verificarToken, upload.single('foto'), async (req, r
             data: dataObj,
             comprovanteId
         });
-        
         await nova.save();
         clearTimeout(timeoutId);
         res.status(201).json(nova);
     } catch (err) {
         clearTimeout(timeoutId);
-        console.error("Falha na transação:", err.message);
-        res.status(500).json({ error: "Falha ao salvar", details: err.message });
+        console.error("Erro no upload/salvamento:", err.message);
+        res.status(500).json({ error: "Falha na operação", details: err.message });
     }
 });
 
 app.get('/api/transacoes', verificarToken, async (req, res) => {
-    try {
-        const { ano, mes } = req.query;
-        if (!ano || !mes) return res.json([]);
-        const ModeloPasta = getModelTransacao(ano, mes);
-        const transacoes = await ModeloPasta.find().sort({ data: -1 });
-        res.json(transacoes);
-    } catch (err) { res.status(500).json({ error: "Erro ao buscar transações" }); }
+    const { ano, mes } = req.query;
+    if (!ano || !mes) return res.json([]);
+    const ModeloPasta = getModelTransacao(ano, mes);
+    const transacoes = await ModeloPasta.find().sort({ data: -1 });
+    res.json(transacoes);
 });
 
 module.exports = app;
