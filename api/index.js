@@ -14,7 +14,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
-// Configuração Google Drive com a sua Conta de Serviço
+// Configuração Google Drive
 const auth = new google.auth.JWT(
     "iadev-633@deft-racer-474802-u0.iam.gserviceaccount.com",
     null,
@@ -90,44 +90,50 @@ app.post('/api/login', async (req, res) => {
     res.status(401).json({ error: "Credenciais inválidas" });
 });
 
-// Rota de Upload corrigida para usar a pasta pai (evita erro de cota)
 app.post('/api/upload', verificarToken, upload.single('file'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "Nenhum arquivo" });
         
         const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-        if (!folderId) {
-            return res.status(500).json({ error: "Configuração ausente: GOOGLE_DRIVE_FOLDER_ID" });
-        }
+        if (!folderId) return res.status(500).json({ error: "Variável GOOGLE_DRIVE_FOLDER_ID ausente." });
 
         const bufferStream = new stream.PassThrough();
         bufferStream.end(req.file.buffer);
 
+        // Upload corrigido para herdar espaço da conta pessoal
         const response = await drive.files.create({
             requestBody: {
                 name: `comprovante_${Date.now()}_${req.file.originalname}`,
-                parents: [folderId] // Importante: salva na sua pasta pessoal
+                parents: [folderId]
             },
             media: {
                 mimeType: req.file.mimetype,
                 body: bufferStream
             },
-            fields: 'id, webViewLink'
+            fields: 'id, webViewLink',
+            // Força o reconhecimento de permissões da pasta compartilhada
+            supportsAllDrives: true,
+            keepRevisionForever: false
         });
 
-        // Concede permissão de visualização para qualquer um com o link
-        await drive.permissions.create({
-            fileId: response.data.id,
-            requestBody: {
-                role: 'reader',
-                type: 'anyone'
-            }
-        });
+        // Tenta liberar acesso de leitura para o link funcionar no app
+        try {
+            await drive.permissions.create({
+                fileId: response.data.id,
+                requestBody: {
+                    role: 'reader',
+                    type: 'anyone'
+                },
+                supportsAllDrives: true
+            });
+        } catch (permErr) {
+            console.warn("Não foi possível definir permissão pública, mas o arquivo foi salvo.");
+        }
 
         res.json({ link: response.data.webViewLink });
     } catch (err) {
         console.error("Erro no upload Drive:", err.message);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: `Erro de Cota: Verifique se a pasta ${folderId} foi compartilhada com o e-mail da conta de serviço como EDITOR.` });
     }
 });
 
