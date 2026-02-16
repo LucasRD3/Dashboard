@@ -7,54 +7,36 @@ const bcrypt = require('bcryptjs');
 
 const app = express();
 
-const SECRET_KEY = process.env.SECRET_KEY || "sua_chave_secreta_padrao"; 
+// Chaves configuradas no painel do Vercel
+const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
 app.use(cors());
 app.use(bodyParser.json());
 
+// Gestão de ligação para MongoDB Atlas
 let isConnected = false;
-
 const connectDB = async () => {
     if (isConnected) return;
-    
-    const opts = {
-        serverSelectionTimeoutMS: 10000, // Aumentado para 10s
-        socketTimeoutMS: 45000,
-        family: 4 // Força IPv4 para evitar problemas de resolução no Vercel
-    };
-
     try {
-        if (!MONGO_URI) {
-            throw new Error("Variável MONGO_URI não definida");
-        }
-        
-        console.log("Tentando conectar ao MongoDB...");
-        await mongoose.connect(MONGO_URI, opts);
+        if (!MONGO_URI) throw new Error("MONGO_URI não definida no Vercel");
+        await mongoose.connect(MONGO_URI, {
+            serverSelectionTimeoutMS: 10000,
+            family: 4 
+        });
         isConnected = true;
-        console.log("Conectado ao MongoDB Atlas com sucesso");
+        console.log("Conectado ao MongoDB Atlas");
     } catch (err) {
-        console.error("ERRO DE CONEXÃO:", err.message);
-        isConnected = false;
+        console.error("Erro ao conectar ao MongoDB:", err.message);
     }
 };
 
-// Middleware para validar conexão
 app.use(async (req, res, next) => {
-    if (!isConnected) {
-        await connectDB();
-    }
-    
-    if (!isConnected) {
-        return res.status(503).json({ 
-            error: "Banco de dados indisponível",
-            details: "A API não conseguiu conectar ao Atlas. Verifique se a senha foi codificada corretamente com %40." 
-        });
-    }
+    await connectDB();
     next();
 });
 
-// Esquemas
+// Esquemas de Dados
 const TransacaoSchema = new mongoose.Schema({
     descricao: String,
     valor: Number,
@@ -70,7 +52,7 @@ const UserSchema = new mongoose.Schema({
 const Transacao = mongoose.models.Transacao || mongoose.model('Transacao', TransacaoSchema);
 const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
-// Middleware de Token
+// Middleware de Autenticação
 const verificarToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(" ")[1];
@@ -78,13 +60,18 @@ const verificarToken = (req, res, next) => {
     if (!token) return res.status(403).json({ error: "Token não fornecido" });
 
     jwt.verify(token, SECRET_KEY, (err, decoded) => {
-        if (err) return res.status(401).json({ error: "Token inválido" });
+        if (err) return res.status(401).json({ error: "Sessão expirada ou token inválido" });
         req.userId = decoded.id;
         next();
     });
 };
 
-// Rotas
+// --- ROTAS DA API ---
+
+app.get('/api', (req, res) => {
+    res.json({ message: "IADEV API Ativa", mongodb: isConnected });
+});
+
 app.get('/api/ping', (req, res) => {
     res.json({ status: "online", mongodb: isConnected });
 });
@@ -92,6 +79,7 @@ app.get('/api/ping', (req, res) => {
 app.post('/api/login', async (req, res) => {
     const { usuario, senha } = req.body;
     
+    // Login Mestre
     if (usuario === "IADEV" && senha === "1234") {
         const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
         return res.json({ auth: true, token });
@@ -104,10 +92,56 @@ app.post('/api/login', async (req, res) => {
             return res.json({ auth: true, token });
         }
     } catch (err) {
-        return res.status(500).json({ error: "Erro interno no login" });
+        return res.status(500).json({ error: "Erro interno no servidor" });
     }
     res.status(401).json({ error: "Usuário ou senha inválidos" });
 });
+
+// --- GESTÃO DE USUÁRIOS ---
+
+app.get('/api/usuarios', verificarToken, async (req, res) => {
+    try {
+        const usuarios = await User.find({}, 'usuario');
+        res.json(usuarios);
+    } catch (err) {
+        res.status(500).json({ error: "Erro ao buscar usuários" });
+    }
+});
+
+app.post('/api/usuarios', verificarToken, async (req, res) => {
+    try {
+        const { usuario, senha } = req.body;
+        const salt = await bcrypt.genSalt(10);
+        const hashedSenha = await bcrypt.hash(senha, salt);
+        const novoUsuario = new User({ usuario, senha: hashedSenha });
+        await novoUsuario.save();
+        res.status(201).json({ message: "Usuário criado" });
+    } catch (err) {
+        res.status(500).json({ error: "Erro ao salvar usuário" });
+    }
+});
+
+app.put('/api/usuarios/:id', verificarToken, async (req, res) => {
+    try {
+        const salt = await bcrypt.genSalt(10);
+        const hashedSenha = await bcrypt.hash(req.body.novaSenha, salt);
+        await User.findByIdAndUpdate(req.params.id, { senha: hashedSenha });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: "Erro ao atualizar senha" });
+    }
+});
+
+app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
+    try {
+        await User.findByIdAndDelete(req.params.id);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: "Erro ao excluir usuário" });
+    }
+});
+
+// --- GESTÃO DE TRANSAÇÕES ---
 
 app.get('/api/transacoes', verificarToken, async (req, res) => {
     try {
@@ -129,7 +163,25 @@ app.post('/api/transacoes', verificarToken, async (req, res) => {
         await novaTransacao.save();
         res.status(201).json(novaTransacao);
     } catch (err) {
-        res.status(500).json({ error: "Erro ao salvar" });
+        res.status(500).json({ error: "Erro ao salvar transação" });
+    }
+});
+
+app.put('/api/transacoes/:id', verificarToken, async (req, res) => {
+    try {
+        const atualizada = await Transacao.findByIdAndUpdate(
+            req.params.id,
+            {
+                descricao: req.body.descricao,
+                valor: parseFloat(req.body.valor),
+                tipo: req.body.tipo,
+                data: req.body.dataManual
+            },
+            { new: true }
+        );
+        res.json(atualizada);
+    } catch (err) {
+        res.status(500).json({ error: "Erro ao atualizar" });
     }
 });
 
