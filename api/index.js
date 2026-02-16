@@ -14,14 +14,15 @@ const upload = multer();
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
-// Configuração Google Drive com proteção contra falha fatal
+// Configuração Google Drive com correção de decodificação de chave
 let drive;
 try {
-    const privateKey = process.env.GOOGLE_PRIVATE_KEY 
-        ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') 
-        : null;
+    let privateKey = process.env.GOOGLE_PRIVATE_KEY;
 
-    if (privateKey && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL) {
+    if (privateKey) {
+        // Remove aspas eventuais e trata as quebras de linha corretamente
+        privateKey = privateKey.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n');
+        
         const auth = new google.auth.JWT(
             process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
             null,
@@ -31,7 +32,7 @@ try {
         drive = google.drive({ version: 'v3', auth });
     }
 } catch (e) {
-    console.error("Erro crítico na configuração do Drive:", e.message);
+    console.error("Erro na decodificação da chave do Drive:", e.message);
 }
 
 app.use(cors());
@@ -41,12 +42,11 @@ let isConnected = false;
 const connectDB = async () => {
     if (isConnected) return;
     try {
-        if (!MONGO_URI) throw new Error("MONGO_URI não definida no Vercel");
+        if (!MONGO_URI) throw new Error("MONGO_URI não definida");
         await mongoose.connect(MONGO_URI);
         isConnected = true;
-        console.log("Conectado ao MongoDB Atlas");
     } catch (err) {
-        console.error("Erro ao conectar ao MongoDB:", err.message);
+        console.error("Erro MongoDB:", err.message);
     }
 };
 
@@ -55,6 +55,7 @@ app.use(async (req, res, next) => {
     next();
 });
 
+// Esquemas
 const TransacaoSchema = new mongoose.Schema({
     descricao: String,
     valor: Number,
@@ -141,23 +142,19 @@ app.post('/api/transacoes', verificarToken, upload.single('foto'), async (req, r
         let comprovanteId = "";
         
         if (req.file && drive) {
-            try {
-                const bufferStream = new Readable();
-                bufferStream.push(req.file.buffer);
-                bufferStream.push(null);
+            const bufferStream = new Readable();
+            bufferStream.push(req.file.buffer);
+            bufferStream.push(null);
 
-                const driveRes = await drive.files.create({
-                    requestBody: {
-                        name: `comprovante-${Date.now()}.jpg`,
-                        parents: [process.env.GOOGLE_DRIVE_FOLDER_ID]
-                    },
-                    media: { mimeType: req.file.mimetype, body: bufferStream },
-                    fields: 'id'
-                });
-                comprovanteId = driveRes.data.id;
-            } catch (driveErr) {
-                console.error("Erro upload Drive:", driveErr.message);
-            }
+            const driveRes = await drive.files.create({
+                requestBody: {
+                    name: `comprovante-${Date.now()}.jpg`,
+                    parents: [process.env.GOOGLE_DRIVE_FOLDER_ID]
+                },
+                media: { mimeType: req.file.mimetype, body: bufferStream },
+                fields: 'id'
+            });
+            comprovanteId = driveRes.data.id;
         }
 
         const dataObj = new Date(req.body.dataManual);
