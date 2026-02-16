@@ -18,34 +18,37 @@ let isConnected = false;
 const connectDB = async () => {
     if (isConnected) return;
     
-    // Configurações para evitar avisos de depreciação e melhorar estabilidade
     const opts = {
-        serverSelectionTimeoutMS: 5000,
+        serverSelectionTimeoutMS: 10000, // Aumentado para 10s
         socketTimeoutMS: 45000,
+        family: 4 // Força IPv4 para evitar problemas de resolução no Vercel
     };
 
     try {
         if (!MONGO_URI) {
-            throw new Error("Variável MONGO_URI não encontrada no Vercel");
+            throw new Error("Variável MONGO_URI não definida");
         }
+        
+        console.log("Tentando conectar ao MongoDB...");
         await mongoose.connect(MONGO_URI, opts);
         isConnected = true;
         console.log("Conectado ao MongoDB Atlas com sucesso");
     } catch (err) {
-        console.error("ERRO CRÍTICO MONGODB:", err.message);
+        console.error("ERRO DE CONEXÃO:", err.message);
         isConnected = false;
     }
 };
 
-// Middleware de verificação de conexão
+// Middleware para validar conexão
 app.use(async (req, res, next) => {
     if (!isConnected) {
         await connectDB();
     }
+    
     if (!isConnected) {
-        return res.status(500).json({ 
-            error: "Erro de conexão com o banco de dados",
-            details: "Verifique a whitelist de IP no MongoDB Atlas ou a URI" 
+        return res.status(503).json({ 
+            error: "Banco de dados indisponível",
+            details: "A API não conseguiu conectar ao Atlas. Verifique se a senha foi codificada corretamente com %40." 
         });
     }
     next();
@@ -67,9 +70,11 @@ const UserSchema = new mongoose.Schema({
 const Transacao = mongoose.models.Transacao || mongoose.model('Transacao', TransacaoSchema);
 const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
+// Middleware de Token
 const verificarToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(" ")[1];
+
     if (!token) return res.status(403).json({ error: "Token não fornecido" });
 
     jwt.verify(token, SECRET_KEY, (err, decoded) => {
@@ -79,17 +84,19 @@ const verificarToken = (req, res, next) => {
     });
 };
 
-// Rotas da API
+// Rotas
 app.get('/api/ping', (req, res) => {
     res.json({ status: "online", mongodb: isConnected });
 });
 
 app.post('/api/login', async (req, res) => {
     const { usuario, senha } = req.body;
+    
     if (usuario === "IADEV" && senha === "1234") {
         const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
         return res.json({ auth: true, token });
     }
+
     try {
         const user = await User.findOne({ usuario });
         if (user && await bcrypt.compare(senha, user.senha)) {
@@ -97,9 +104,9 @@ app.post('/api/login', async (req, res) => {
             return res.json({ auth: true, token });
         }
     } catch (err) {
-        return res.status(500).json({ error: "Erro de autenticação" });
+        return res.status(500).json({ error: "Erro interno no login" });
     }
-    res.status(401).json({ error: "Credenciais inválidas" });
+    res.status(401).json({ error: "Usuário ou senha inválidos" });
 });
 
 app.get('/api/transacoes', verificarToken, async (req, res) => {
@@ -107,7 +114,7 @@ app.get('/api/transacoes', verificarToken, async (req, res) => {
         const transacoes = await Transacao.find();
         res.json(transacoes);
     } catch (err) {
-        res.status(500).json({ error: "Erro ao buscar dados" });
+        res.status(500).json({ error: "Erro ao buscar transações" });
     }
 });
 
@@ -132,16 +139,6 @@ app.delete('/api/transacoes/:id', verificarToken, async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: "Erro ao excluir" });
-    }
-});
-
-// Outras rotas de usuários seguem o mesmo padrão...
-app.get('/api/usuarios', verificarToken, async (req, res) => {
-    try {
-        const usuarios = await User.find({}, 'usuario');
-        res.json(usuarios);
-    } catch (err) {
-        res.status(500).json({ error: "Erro ao listar" });
     }
 });
 
