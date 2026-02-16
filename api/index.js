@@ -68,8 +68,9 @@ const verificarToken = (req, res, next) => {
 
 // --- ROTAS DA API ---
 
+// Rota alterada para exibir apenas o texto solicitado
 app.get('/api', (req, res) => {
-    res.json({ message: "IADEV API Ativa", mongodb: isConnected });
+    res.send("IADEV API");
 });
 
 app.get('/api/ping', (req, res) => {
