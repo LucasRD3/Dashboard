@@ -9,19 +9,30 @@ const multer = require('multer');
 const { Readable } = require('stream');
 
 const app = express();
-const upload = multer(); // Configuração para receber arquivos em memória
+const upload = multer();
 
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
-// Configuração Google Drive
-const auth = new google.auth.JWT(
-    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    null,
-    process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-    ['https://www.googleapis.com/auth/drive.file']
-);
-const drive = google.drive({ version: 'v3', auth });
+// Configuração Google Drive com proteção contra falha fatal
+let drive;
+try {
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY 
+        ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') 
+        : null;
+
+    if (privateKey && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL) {
+        const auth = new google.auth.JWT(
+            process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+            null,
+            privateKey,
+            ['https://www.googleapis.com/auth/drive.file']
+        );
+        drive = google.drive({ version: 'v3', auth });
+    }
+} catch (e) {
+    console.error("Erro crítico na configuração do Drive:", e.message);
+}
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -44,13 +55,12 @@ app.use(async (req, res, next) => {
     next();
 });
 
-// Esquemas
 const TransacaoSchema = new mongoose.Schema({
     descricao: String,
     valor: Number,
     tipo: String,
     data: Date,
-    comprovanteId: String // ID do arquivo no Google Drive
+    comprovanteId: String
 });
 
 const MembroSchema = new mongoose.Schema({
@@ -82,7 +92,7 @@ const verificarToken = (req, res, next) => {
 };
 
 app.get('/api/ping', (req, res) => {
-    res.json({ status: "online", mongodb: isConnected });
+    res.json({ status: "online", mongodb: isConnected, drive_ready: !!drive });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -101,64 +111,6 @@ app.post('/api/login', async (req, res) => {
         return res.status(500).json({ error: "Erro interno" });
     }
     res.status(401).json({ error: "Usuário ou senha inválidos" });
-});
-
-// GESTÃO DE USUÁRIOS
-app.get('/api/usuarios', verificarToken, async (req, res) => {
-    try {
-        const usuarios = await User.find({}, 'usuario');
-        res.json(usuarios);
-    } catch (err) { res.status(500).json({ error: "Erro ao buscar usuários" }); }
-});
-
-app.post('/api/usuarios', verificarToken, async (req, res) => {
-    try {
-        const { usuario, senha } = req.body;
-        const salt = await bcrypt.genSalt(10);
-        const hashedSenha = await bcrypt.hash(senha, salt);
-        const novoUsuario = new User({ usuario, senha: hashedSenha });
-        await novoUsuario.save();
-        res.status(201).json({ message: "Usuário criado" });
-    } catch (err) { res.status(500).json({ error: "Erro ao salvar usuário" }); }
-});
-
-app.put('/api/usuarios/:id', verificarToken, async (req, res) => {
-    try {
-        const salt = await bcrypt.genSalt(10);
-        const hashedSenha = await bcrypt.hash(req.body.novaSenha, salt);
-        await User.findByIdAndUpdate(req.params.id, { senha: hashedSenha });
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: "Erro ao atualizar senha" }); }
-});
-
-app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
-    try {
-        await User.findByIdAndDelete(req.params.id);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: "Erro ao excluir usuário" }); }
-});
-
-// GESTÃO DE MEMBROS E HISTÓRICO GLOBAL
-app.get('/api/membros', verificarToken, async (req, res) => {
-    try {
-        const membros = await Membro.find().sort({ nome: 1 });
-        res.json(membros);
-    } catch (err) { res.status(500).json({ error: "Erro ao buscar membros" }); }
-});
-
-app.post('/api/membros', verificarToken, async (req, res) => {
-    try {
-        const novo = new Membro({ nome: req.body.nome });
-        await novo.save();
-        res.status(201).json(novo);
-    } catch (err) { res.status(500).json({ error: "Erro ao salvar membro" }); }
-});
-
-app.delete('/api/membros/:id', verificarToken, async (req, res) => {
-    try {
-        await Membro.findByIdAndDelete(req.params.id);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: "Erro ao excluir membro" }); }
 });
 
 app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
@@ -184,34 +136,28 @@ app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
     }
 });
 
-// GESTÃO DE TRANSAÇÕES (COM UPLOAD)
-app.get('/api/transacoes', verificarToken, async (req, res) => {
-    try {
-        const { ano, mes } = req.query;
-        if (!ano || !mes) return res.json([]);
-        const ModeloPasta = getModelTransacao(ano, mes);
-        const transacoes = await ModeloPasta.find().sort({ data: -1 });
-        res.json(transacoes);
-    } catch (err) { res.status(500).json({ error: "Erro ao buscar" }); }
-});
-
 app.post('/api/transacoes', verificarToken, upload.single('foto'), async (req, res) => {
     try {
         let comprovanteId = "";
-        if (req.file) {
-            const bufferStream = new Readable();
-            bufferStream.push(req.file.buffer);
-            bufferStream.push(null);
+        
+        if (req.file && drive) {
+            try {
+                const bufferStream = new Readable();
+                bufferStream.push(req.file.buffer);
+                bufferStream.push(null);
 
-            const driveRes = await drive.files.create({
-                requestBody: {
-                    name: `comprovante-${Date.now()}.jpg`,
-                    parents: [process.env.GOOGLE_DRIVE_FOLDER_ID]
-                },
-                media: { mimeType: req.file.mimetype, body: bufferStream },
-                fields: 'id'
-            });
-            comprovanteId = driveRes.data.id;
+                const driveRes = await drive.files.create({
+                    requestBody: {
+                        name: `comprovante-${Date.now()}.jpg`,
+                        parents: [process.env.GOOGLE_DRIVE_FOLDER_ID]
+                    },
+                    media: { mimeType: req.file.mimetype, body: bufferStream },
+                    fields: 'id'
+                });
+                comprovanteId = driveRes.data.id;
+            } catch (driveErr) {
+                console.error("Erro upload Drive:", driveErr.message);
+            }
         }
 
         const dataObj = new Date(req.body.dataManual);
@@ -225,32 +171,40 @@ app.post('/api/transacoes', verificarToken, upload.single('foto'), async (req, r
         });
         await nova.save();
         res.status(201).json(nova);
-    } catch (err) { res.status(500).json({ error: "Erro ao salvar transação" }); }
+    } catch (err) {
+        console.error("Erro POST transação:", err.message);
+        res.status(500).json({ error: "Falha ao salvar", details: err.message });
+    }
 });
 
-app.put('/api/transacoes/:id', verificarToken, async (req, res) => {
+app.get('/api/transacoes', verificarToken, async (req, res) => {
     try {
         const { ano, mes } = req.query;
+        if (!ano || !mes) return res.json([]);
         const ModeloPasta = getModelTransacao(ano, mes);
-        const atualizada = await ModeloPasta.findByIdAndUpdate(
-            req.params.id,
-            {
-                descricao: req.body.descricao,
-                valor: parseFloat(req.body.valor),
-                tipo: req.body.tipo,
-                data: new Date(req.body.dataManual)
-            },
-            { new: true }
-        );
-        res.json(atualizada);
-    } catch (err) { res.status(500).json({ error: "Erro ao atualizar" }); }
+        const transacoes = await ModeloPasta.find().sort({ data: -1 });
+        res.json(transacoes);
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar" }); }
 });
 
-app.delete('/api/transacoes/:id', verificarToken, async (req, res) => {
+app.get('/api/membros', verificarToken, async (req, res) => {
     try {
-        const { ano, mes } = req.query;
-        const ModeloPasta = getModelTransacao(ano, mes);
-        await ModeloPasta.findByIdAndDelete(req.params.id);
+        const membros = await Membro.find().sort({ nome: 1 });
+        res.json(membros);
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar membros" }); }
+});
+
+app.post('/api/membros', verificarToken, async (req, res) => {
+    try {
+        const novo = new Membro({ nome: req.body.nome });
+        await novo.save();
+        res.status(201).json(novo);
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar membro" }); }
+});
+
+app.delete('/api/membros/:id', verificarToken, async (req, res) => {
+    try {
+        await Membro.findByIdAndDelete(req.params.id);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: "Erro ao excluir" }); }
 });
