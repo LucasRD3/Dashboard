@@ -4,11 +4,24 @@ const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { google } = require('googleapis');
+const multer = require('multer');
+const { Readable } = require('stream');
 
 const app = express();
+const upload = multer(); // Configuração para receber arquivos em memória
 
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
+
+// Configuração Google Drive
+const auth = new google.auth.JWT(
+    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    null,
+    process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    ['https://www.googleapis.com/auth/drive.file']
+);
+const drive = google.drive({ version: 'v3', auth });
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -36,7 +49,8 @@ const TransacaoSchema = new mongoose.Schema({
     descricao: String,
     valor: Number,
     tipo: String,
-    data: Date
+    data: Date,
+    comprovanteId: String // ID do arquivo no Google Drive
 });
 
 const MembroSchema = new mongoose.Schema({
@@ -124,7 +138,7 @@ app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Erro ao excluir usuário" }); }
 });
 
-// GESTÃO DE MEMBROS
+// GESTÃO DE MEMBROS E HISTÓRICO GLOBAL
 app.get('/api/membros', verificarToken, async (req, res) => {
     try {
         const membros = await Membro.find().sort({ nome: 1 });
@@ -147,7 +161,6 @@ app.delete('/api/membros/:id', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Erro ao excluir membro" }); }
 });
 
-// NOVO: Histórico Completo do Membro (Todos os tempos)
 app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
     try {
         const nomeMembro = req.params.nome;
@@ -157,7 +170,6 @@ app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
             .filter(name => /^\d{4}-\d{2}$/.test(name));
 
         let historicoCompleto = [];
-
         for (const nomeColecao of colecoesData) {
             const Modelo = mongoose.models[nomeColecao] || mongoose.model(nomeColecao, TransacaoSchema, nomeColecao);
             const transacoes = await Modelo.find({
@@ -165,7 +177,6 @@ app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
             });
             historicoCompleto = historicoCompleto.concat(transacoes);
         }
-
         historicoCompleto.sort((a, b) => new Date(b.data) - new Date(a.data));
         res.json(historicoCompleto);
     } catch (err) {
@@ -173,7 +184,7 @@ app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
     }
 });
 
-// GESTÃO DE TRANSAÇÕES
+// GESTÃO DE TRANSAÇÕES (COM UPLOAD)
 app.get('/api/transacoes', verificarToken, async (req, res) => {
     try {
         const { ano, mes } = req.query;
@@ -184,19 +195,37 @@ app.get('/api/transacoes', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Erro ao buscar" }); }
 });
 
-app.post('/api/transacoes', verificarToken, async (req, res) => {
+app.post('/api/transacoes', verificarToken, upload.single('foto'), async (req, res) => {
     try {
+        let comprovanteId = "";
+        if (req.file) {
+            const bufferStream = new Readable();
+            bufferStream.push(req.file.buffer);
+            bufferStream.push(null);
+
+            const driveRes = await drive.files.create({
+                requestBody: {
+                    name: `comprovante-${Date.now()}.jpg`,
+                    parents: [process.env.GOOGLE_DRIVE_FOLDER_ID]
+                },
+                media: { mimeType: req.file.mimetype, body: bufferStream },
+                fields: 'id'
+            });
+            comprovanteId = driveRes.data.id;
+        }
+
         const dataObj = new Date(req.body.dataManual);
         const ModeloPasta = getModelTransacao(dataObj.getUTCFullYear(), dataObj.getUTCMonth());
         const nova = new ModeloPasta({
             descricao: req.body.descricao,
             valor: parseFloat(req.body.valor),
             tipo: req.body.tipo,
-            data: dataObj
+            data: dataObj,
+            comprovanteId: comprovanteId
         });
         await nova.save();
         res.status(201).json(nova);
-    } catch (err) { res.status(500).json({ error: "Erro ao salvar" }); }
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar transação" }); }
 });
 
 app.put('/api/transacoes/:id', verificarToken, async (req, res) => {
