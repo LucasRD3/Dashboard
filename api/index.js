@@ -95,11 +95,12 @@ app.post('/api/upload', verificarToken, upload.single('file'), async (req, res) 
         if (!req.file) return res.status(400).json({ error: "Nenhum arquivo enviado." });
         
         const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-        if (!folderId) throw new Error("ID da pasta do Google Drive não configurado no servidor.");
+        if (!folderId) throw new Error("A variável GOOGLE_DRIVE_FOLDER_ID não está configurada.");
 
         const bufferStream = new stream.PassThrough();
         bufferStream.end(req.file.buffer);
 
+        // Upload do arquivo definindo explicitamente a pasta pai
         const response = await drive.files.create({
             requestBody: {
                 name: `comprovante_${Date.now()}_${req.file.originalname}`,
@@ -112,7 +113,7 @@ app.post('/api/upload', verificarToken, upload.single('file'), async (req, res) 
             fields: 'id, webViewLink'
         });
 
-        // Tornar o arquivo visível para qualquer pessoa com o link (opcional, mas ajuda a visualizar no dashboard)
+        // Garantir permissão de leitura para que o link funcione no Dashboard
         await drive.permissions.create({
             fileId: response.data.id,
             requestBody: {
