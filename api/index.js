@@ -9,20 +9,19 @@ const multer = require('multer');
 const { Readable } = require('stream');
 
 const app = express();
-const upload = multer();
+// Limite de 5MB para evitar timeouts excessivos na Vercel
+const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } }); 
 
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
-// Configuração Google Drive com correção de decodificação de chave
+// Configuração Google Drive com tratamento de erro na chave
 let drive;
 try {
     let privateKey = process.env.GOOGLE_PRIVATE_KEY;
-
     if (privateKey) {
-        // Remove aspas eventuais e trata as quebras de linha corretamente
+        // Limpeza da chave para evitar erro de decodificação
         privateKey = privateKey.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n');
-        
         const auth = new google.auth.JWT(
             process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
             null,
@@ -32,7 +31,7 @@ try {
         drive = google.drive({ version: 'v3', auth });
     }
 } catch (e) {
-    console.error("Erro na decodificação da chave do Drive:", e.message);
+    console.error("Erro na configuração do Drive:", e.message);
 }
 
 app.use(cors());
@@ -42,11 +41,10 @@ let isConnected = false;
 const connectDB = async () => {
     if (isConnected) return;
     try {
-        if (!MONGO_URI) throw new Error("MONGO_URI não definida");
-        await mongoose.connect(MONGO_URI);
+        await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 5000 });
         isConnected = true;
     } catch (err) {
-        console.error("Erro MongoDB:", err.message);
+        console.error("Erro ao conectar ao MongoDB:", err.message);
     }
 };
 
@@ -57,10 +55,10 @@ app.use(async (req, res, next) => {
 
 // Esquemas
 const TransacaoSchema = new mongoose.Schema({
-    descricao: String,
-    valor: Number,
-    tipo: String,
-    data: Date,
+    descricao: String, 
+    valor: Number, 
+    tipo: String, 
+    data: Date, 
     comprovanteId: String
 });
 
@@ -81,10 +79,8 @@ const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema(
 const Membro = mongoose.models.Membro || mongoose.model('Membro', MembroSchema);
 
 const verificarToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(" ")[1];
-    if (!token) return res.status(403).json({ error: "Token não fornecido" });
-
+    const token = req.headers['authorization']?.split(" ")[1];
+    if (!token) return res.status(403).json({ error: "Token ausente" });
     jwt.verify(token, SECRET_KEY, (err, decoded) => {
         if (err) return res.status(401).json({ error: "Sessão expirada" });
         req.userId = decoded.id;
@@ -92,9 +88,9 @@ const verificarToken = (req, res, next) => {
     });
 };
 
-app.get('/api/ping', (req, res) => {
-    res.json({ status: "online", mongodb: isConnected, drive_ready: !!drive });
-});
+// --- ROTAS DO SISTEMA ---
+
+app.get('/api/ping', (req, res) => res.json({ status: "online", mongodb: isConnected, drive: !!drive }));
 
 app.post('/api/login', async (req, res) => {
     const { usuario, senha } = req.body;
@@ -108,10 +104,23 @@ app.post('/api/login', async (req, res) => {
             const token = jwt.sign({ id: user._id }, SECRET_KEY, { expiresIn: '24h' });
             return res.json({ auth: true, token });
         }
-    } catch (err) {
-        return res.status(500).json({ error: "Erro interno" });
-    }
+    } catch (err) { return res.status(500).json({ error: "Erro interno" }); }
     res.status(401).json({ error: "Usuário ou senha inválidos" });
+});
+
+app.get('/api/membros', verificarToken, async (req, res) => {
+    try {
+        const membros = await Membro.find().sort({ nome: 1 });
+        res.json(membros);
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar membros" }); }
+});
+
+app.post('/api/membros', verificarToken, async (req, res) => {
+    try {
+        const novo = new Membro({ nome: req.body.nome });
+        await novo.save();
+        res.status(201).json(novo);
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar membro" }); }
 });
 
 app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
@@ -132,44 +141,53 @@ app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
         }
         historicoCompleto.sort((a, b) => new Date(b.data) - new Date(a.data));
         res.json(historicoCompleto);
-    } catch (err) {
-        res.status(500).json({ error: "Erro ao buscar ficha do membro" });
-    }
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar histórico" }); }
 });
 
 app.post('/api/transacoes', verificarToken, upload.single('foto'), async (req, res) => {
+    // Aborta o upload se o Drive demorar mais que 7 segundos para evitar timeout da Vercel
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7000); 
+
     try {
         let comprovanteId = "";
         
         if (req.file && drive) {
-            const bufferStream = new Readable();
-            bufferStream.push(req.file.buffer);
-            bufferStream.push(null);
+            try {
+                const bufferStream = new Readable();
+                bufferStream.push(req.file.buffer);
+                bufferStream.push(null);
 
-            const driveRes = await drive.files.create({
-                requestBody: {
-                    name: `comprovante-${Date.now()}.jpg`,
-                    parents: [process.env.GOOGLE_DRIVE_FOLDER_ID]
-                },
-                media: { mimeType: req.file.mimetype, body: bufferStream },
-                fields: 'id'
-            });
-            comprovanteId = driveRes.data.id;
+                const driveRes = await drive.files.create({
+                    requestBody: {
+                        name: `comprovante-${Date.now()}.jpg`,
+                        parents: [process.env.GOOGLE_DRIVE_FOLDER_ID]
+                    },
+                    media: { mimeType: req.file.mimetype, body: bufferStream },
+                    fields: 'id'
+                }, { signal: controller.signal });
+                comprovanteId = driveRes.data.id;
+            } catch (driveErr) {
+                console.warn("Upload do Drive ignorado devido a lentidão ou erro:", driveErr.message);
+            }
         }
 
         const dataObj = new Date(req.body.dataManual);
-        const ModeloPasta = getModelTransacao(dataObj.getUTCFullYear(), dataObj.getUTCMonth());
-        const nova = new ModeloPasta({
+        const Modelo = getModelTransacao(dataObj.getUTCFullYear(), dataObj.getUTCMonth());
+        const nova = new Modelo({
             descricao: req.body.descricao,
             valor: parseFloat(req.body.valor),
             tipo: req.body.tipo,
             data: dataObj,
-            comprovanteId: comprovanteId
+            comprovanteId
         });
+        
         await nova.save();
+        clearTimeout(timeoutId);
         res.status(201).json(nova);
     } catch (err) {
-        console.error("Erro POST transação:", err.message);
+        clearTimeout(timeoutId);
+        console.error("Falha na transação:", err.message);
         res.status(500).json({ error: "Falha ao salvar", details: err.message });
     }
 });
@@ -181,29 +199,7 @@ app.get('/api/transacoes', verificarToken, async (req, res) => {
         const ModeloPasta = getModelTransacao(ano, mes);
         const transacoes = await ModeloPasta.find().sort({ data: -1 });
         res.json(transacoes);
-    } catch (err) { res.status(500).json({ error: "Erro ao buscar" }); }
-});
-
-app.get('/api/membros', verificarToken, async (req, res) => {
-    try {
-        const membros = await Membro.find().sort({ nome: 1 });
-        res.json(membros);
-    } catch (err) { res.status(500).json({ error: "Erro ao buscar membros" }); }
-});
-
-app.post('/api/membros', verificarToken, async (req, res) => {
-    try {
-        const novo = new Membro({ nome: req.body.nome });
-        await novo.save();
-        res.status(201).json(novo);
-    } catch (err) { res.status(500).json({ error: "Erro ao salvar membro" }); }
-});
-
-app.delete('/api/membros/:id', verificarToken, async (req, res) => {
-    try {
-        await Membro.findByIdAndDelete(req.params.id);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: "Erro ao excluir" }); }
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar transações" }); }
 });
 
 module.exports = app;
