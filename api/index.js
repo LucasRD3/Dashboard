@@ -7,19 +7,17 @@ const bcrypt = require('bcryptjs');
 
 const app = express();
 
-// Chaves configuradas no painel do Vercel
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
 app.use(cors());
 app.use(bodyParser.json());
 
-// Gestão de ligação para MongoDB Atlas
 let isConnected = false;
 const connectDB = async () => {
     if (isConnected) return;
     try {
-        if (!MONGO_URI) throw new Error("MONGO_URI não definida no Vercel");
+        if (!MONGO_URI) throw new Error("MONGO_URI não definida");
         await mongoose.connect(MONGO_URI, {
             serverSelectionTimeoutMS: 10000,
             family: 4 
@@ -36,54 +34,42 @@ app.use(async (req, res, next) => {
     next();
 });
 
-// Esquemas de Dados - Atualizado para Date e com Index
+// Esquema com campos de agrupamento (Pastas Lógicas)
 const TransacaoSchema = new mongoose.Schema({
     descricao: String,
     valor: Number,
     tipo: String,
-    data: { type: Date, index: true } // Organização nativa por data
+    data: Date,
+    // Campos que funcionam como "pastas"
+    ano: { type: Number, index: true },
+    mes: { type: Number, index: true }
 });
 
-const UserSchema = new mongoose.Schema({
+const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
     usuario: { type: String, required: true, unique: true },
     senha: { type: String, required: true }
-});
+}));
 
 const Transacao = mongoose.models.Transacao || mongoose.model('Transacao', TransacaoSchema);
-const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
-// Middleware de Autenticação
 const verificarToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(" ")[1];
-
     if (!token) return res.status(403).json({ error: "Token não fornecido" });
 
     jwt.verify(token, SECRET_KEY, (err, decoded) => {
-        if (err) return res.status(401).json({ error: "Sessão expirada ou token inválido" });
+        if (err) return res.status(401).json({ error: "Sessão expirada" });
         req.userId = decoded.id;
         next();
     });
 };
 
-// --- ROTAS DA API ---
-
-app.get('/api', (req, res) => {
-    res.send("IADEV API");
-});
-
-app.get('/api/ping', (req, res) => {
-    res.json({ status: "online", mongodb: isConnected });
-});
-
 app.post('/api/login', async (req, res) => {
     const { usuario, senha } = req.body;
-    
     if (usuario === "IADEV" && senha === "1234") {
         const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
         return res.json({ auth: true, token });
     }
-
     try {
         const user = await User.findOne({ usuario });
         if (user && await bcrypt.compare(senha, user.senha)) {
@@ -91,91 +77,58 @@ app.post('/api/login', async (req, res) => {
             return res.json({ auth: true, token });
         }
     } catch (err) {
-        return res.status(500).json({ error: "Erro interno no servidor" });
+        return res.status(500).json({ error: "Erro interno" });
     }
-    res.status(401).json({ error: "Usuário ou senha inválidos" });
+    res.status(401).json({ error: "Inválido" });
 });
 
-// --- GESTÃO DE USUÁRIOS ---
-
-app.get('/api/usuarios', verificarToken, async (req, res) => {
-    try {
-        const usuarios = await User.find({}, 'usuario');
-        res.json(usuarios);
-    } catch (err) {
-        res.status(500).json({ error: "Erro ao buscar usuários" });
-    }
-});
-
-app.post('/api/usuarios', verificarToken, async (req, res) => {
-    try {
-        const { usuario, senha } = req.body;
-        const salt = await bcrypt.genSalt(10);
-        const hashedSenha = await bcrypt.hash(senha, salt);
-        const novoUsuario = new User({ usuario, senha: hashedSenha });
-        await novoUsuario.save();
-        res.status(201).json({ message: "Usuário criado" });
-    } catch (err) {
-        res.status(500).json({ error: "Erro ao salvar usuário" });
-    }
-});
-
-app.put('/api/usuarios/:id', verificarToken, async (req, res) => {
-    try {
-        const salt = await bcrypt.genSalt(10);
-        const hashedSenha = await bcrypt.hash(req.body.novaSenha, salt);
-        await User.findByIdAndUpdate(req.params.id, { senha: hashedSenha });
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: "Erro ao atualizar senha" });
-    }
-});
-
-app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
-    try {
-        await User.findByIdAndDelete(req.params.id);
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: "Erro ao excluir usuário" });
-    }
-});
-
-// --- GESTÃO DE TRANSAÇÕES ---
-
+// GESTÃO DE TRANSAÇÕES ORGANIZADA
 app.get('/api/transacoes', verificarToken, async (req, res) => {
     try {
-        // Retorna ordenado por data descendente para facilitar a listagem
-        const transacoes = await Transacao.find().sort({ data: -1 });
+        const { ano, mes } = req.query;
+        let filtro = {};
+        
+        // Se o front enviar ano/mes, filtramos na "pasta" correta
+        if (ano) filtro.ano = parseInt(ano);
+        if (mes) filtro.mes = parseInt(mes);
+
+        const transacoes = await Transacao.find(filtro).sort({ data: -1 });
         res.json(transacoes);
     } catch (err) {
-        res.status(500).json({ error: "Erro ao buscar transações" });
+        res.status(500).json({ error: "Erro ao buscar" });
     }
 });
 
 app.post('/api/transacoes', verificarToken, async (req, res) => {
     try {
+        const dataObjeto = new Date(req.body.dataManual);
         const novaTransacao = new Transacao({
             descricao: req.body.descricao,
             valor: parseFloat(req.body.valor),
             tipo: req.body.tipo,
-            data: new Date(req.body.dataManual) // Converte string para Date
+            data: dataObjeto,
+            ano: dataObjeto.getUTCFullYear(), // "Pasta" Ano
+            mes: dataObjeto.getUTCMonth()     // "Pasta" Mês
         });
         await novaTransacao.save();
         res.status(201).json(novaTransacao);
     } catch (err) {
-        res.status(500).json({ error: "Erro ao salvar transação" });
+        res.status(500).json({ error: "Erro ao salvar" });
     }
 });
 
 app.put('/api/transacoes/:id', verificarToken, async (req, res) => {
     try {
+        const dataObjeto = new Date(req.body.dataManual);
         const atualizada = await Transacao.findByIdAndUpdate(
             req.params.id,
             {
                 descricao: req.body.descricao,
                 valor: parseFloat(req.body.valor),
                 tipo: req.body.tipo,
-                data: new Date(req.body.dataManual) // Converte string para Date
+                data: dataObjeto,
+                ano: dataObjeto.getUTCFullYear(),
+                mes: dataObjeto.getUTCMonth()
             },
             { new: true }
         );
