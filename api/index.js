@@ -19,6 +19,7 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Storage para Comprovantes Financeiros
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
@@ -28,6 +29,17 @@ const storage = new CloudinaryStorage({
     },
 });
 const upload = multer({ storage: storage });
+
+// Storage para Fotos de Perfil dos Membros
+const storagePerfil = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'perfil_membros',
+        allowed_formats: ['jpg', 'png', 'jpeg'],
+        transformation: [{ width: 300, height: 300, crop: "fill", gravity: "face", quality: "auto" }]
+    },
+});
+const uploadPerfil = multer({ storage: storagePerfil });
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -69,7 +81,8 @@ const Membro = mongoose.models.Membro || mongoose.model('Membro', new mongoose.S
     nome: { type: String, required: true, unique: true },
     cpf: { type: String },
     telefone: { type: String },
-    endereco: { type: String }
+    endereco: { type: String },
+    fotoPerfilUrl: { type: String }
 }));
 
 const verificarToken = (req, res, next) => {
@@ -123,22 +136,37 @@ app.get('/api/membros', verificarToken, async (req, res) => {
     res.json(await Membro.find().sort({ nome: 1 }).lean());
 });
 
-app.post('/api/membros', verificarToken, async (req, res) => {
+app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
     const { nome, cpf, telefone, endereco } = req.body;
+    const fotoPerfilUrl = req.file ? req.file.path : null;
     try {
-        const novo = await new Membro({ nome, cpf, telefone, endereco }).save();
+        const novo = await new Membro({ nome, cpf, telefone, endereco, fotoPerfilUrl }).save();
         res.status(201).json(novo);
     } catch (err) {
         res.status(400).json({ error: "Erro ao salvar membro. Talvez o nome já exista." });
     }
 });
 
-app.put('/api/membros/:id', verificarToken, async (req, res) => {
+app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
     const { nome, cpf, telefone, endereco } = req.body;
     try {
+        const membroAtual = await Membro.findById(req.params.id);
+        if (!membroAtual) return res.status(404).json({ error: "Membro não encontrado" });
+
+        let fotoPerfilUrl = membroAtual.fotoPerfilUrl;
+
+        // Se uma nova foto foi enviada, deletar a antiga do Cloudinary e atualizar URL
+        if (req.file) {
+            if (membroAtual.fotoPerfilUrl) {
+                const publicId = `perfil_membros/${membroAtual.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
+                await cloudinary.uploader.destroy(publicId).catch(console.error);
+            }
+            fotoPerfilUrl = req.file.path;
+        }
+
         const atualizado = await Membro.findByIdAndUpdate(
             req.params.id,
-            { nome, cpf, telefone, endereco },
+            { nome, cpf, telefone, endereco, fotoPerfilUrl },
             { new: true }
         );
         res.json(atualizado);
@@ -148,7 +176,14 @@ app.put('/api/membros/:id', verificarToken, async (req, res) => {
 });
 
 app.delete('/api/membros/:id', verificarToken, async (req, res) => {
-    await Membro.findByIdAndDelete(req.params.id);
+    const membro = await Membro.findByIdAndDelete(req.params.id);
+    
+    // Apagar foto do Cloudinary se existir
+    if (membro?.fotoPerfilUrl) {
+        const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
+        await cloudinary.uploader.destroy(publicId).catch(console.error);
+    }
+    
     res.json({ success: true });
 });
 
