@@ -125,8 +125,26 @@ app.get('/api/membros', verificarToken, async (req, res) => {
 
 app.post('/api/membros', verificarToken, async (req, res) => {
     const { nome, cpf, telefone, endereco } = req.body;
-    const novo = await new Membro({ nome, cpf, telefone, endereco }).save();
-    res.status(201).json(novo);
+    try {
+        const novo = await new Membro({ nome, cpf, telefone, endereco }).save();
+        res.status(201).json(novo);
+    } catch (err) {
+        res.status(400).json({ error: "Erro ao salvar membro. Talvez o nome já exista." });
+    }
+});
+
+app.put('/api/membros/:id', verificarToken, async (req, res) => {
+    const { nome, cpf, telefone, endereco } = req.body;
+    try {
+        const atualizado = await Membro.findByIdAndUpdate(
+            req.params.id,
+            { nome, cpf, telefone, endereco },
+            { new: true }
+        );
+        res.json(atualizado);
+    } catch (err) {
+        res.status(500).json({ error: "Erro ao atualizar membro" });
+    }
 });
 
 app.delete('/api/membros/:id', verificarToken, async (req, res) => {
