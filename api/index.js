@@ -73,18 +73,17 @@ const TransacaoSchema = new mongoose.Schema({
 
 const Transacao = mongoose.models.Transacao || mongoose.model('Transacao', TransacaoSchema);
 
-const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
-    usuario: { type: String, required: true, unique: true },
-    senha: { type: String, required: true }
-}));
-
+// O modelo Membro agora suporta credenciais de Administrador
 const Membro = mongoose.models.Membro || mongoose.model('Membro', new mongoose.Schema({
     nome: { type: String, required: true, unique: true },
     cpf: { type: String },
     telefone: { type: String },
     endereco: { type: String },
     dataNascimento: { type: String },
-    fotoPerfilUrl: { type: String }
+    fotoPerfilUrl: { type: String },
+    isAdministrador: { type: Boolean, default: false },
+    usuario: { type: String },
+    senha: { type: String }
 }));
 
 const verificarToken = (req, res, next) => {
@@ -103,54 +102,55 @@ app.get('/api/ping', (req, res) => res.json({ status: "online" }));
 
 app.post('/api/login', async (req, res) => {
     const { usuario, senha } = req.body;
+    
+    // Mantemos um login master de segurança caso perca acesso aos membros administradores
     if (usuario === "IADEV" && senha === "1234") {
         const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
         return res.json({ auth: true, token });
     }
+    
     try {
-        const user = await User.findOne({ usuario }).lean();
-        if (user && await bcrypt.compare(senha, user.senha)) {
-            const token = jwt.sign({ id: user._id }, SECRET_KEY, { expiresIn: '24h' });
+        // Busca um membro que seja administrador pelo nome de usuário definido
+        const admin = await Membro.findOne({ usuario, isAdministrador: true }).lean();
+        if (admin && await bcrypt.compare(senha, admin.senha)) {
+            const token = jwt.sign({ id: admin._id }, SECRET_KEY, { expiresIn: '24h' });
             return res.json({ auth: true, token });
         }
     } catch (err) { res.status(500).json({ error: "Erro interno" }); }
+    
     res.status(401).json({ error: "Credenciais inválidas" });
 });
 
-// GESTÃO DE USUÁRIOS E MEMBROS
-app.get('/api/usuarios', verificarToken, async (req, res) => {
-    res.json(await User.find({}, 'usuario').lean());
-});
-
-app.post('/api/usuarios', verificarToken, async (req, res) => {
-    const { usuario, senha } = req.body;
-    const hashedSenha = await bcrypt.hash(senha, 10);
-    await new User({ usuario, senha: hashedSenha }).save();
-    res.status(201).json({ message: "OK" });
-});
-
-app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ success: true });
-});
-
+// GESTÃO DE MEMBROS
 app.get('/api/membros', verificarToken, async (req, res) => {
-    res.json(await Membro.find().sort({ nome: 1 }).lean());
+    // Retorna a lista omitindo senhas por segurança
+    res.json(await Membro.find({}, '-senha').sort({ nome: 1 }).lean());
 });
 
 app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
-    const { nome, cpf, telefone, endereco, dataNascimento } = req.body;
+    const { nome, cpf, telefone, endereco, dataNascimento, isAdministrador, usuario, senha } = req.body;
     const fotoPerfilUrl = req.file ? req.file.path : null;
+    
     try {
-        const novo = await new Membro({ nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl }).save();
+        let hashedSenha = null;
+        if (isAdministrador === 'true' && senha) {
+            hashedSenha = await bcrypt.hash(senha, 10);
+        }
+
+        const novo = await new Membro({ 
+            nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl,
+            isAdministrador: isAdministrador === 'true',
+            usuario: isAdministrador === 'true' ? usuario : null,
+            senha: hashedSenha
+        }).save();
         res.status(201).json(novo);
     } catch (err) {
-        res.status(400).json({ error: "Erro ao salvar membro. Talvez o nome já exista." });
+        res.status(400).json({ error: "Erro ao salvar membro. Verifique se o nome não está duplicado." });
     }
 });
 
 app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
-    const { nome, cpf, telefone, endereco, dataNascimento } = req.body;
+    const { nome, cpf, telefone, endereco, dataNascimento, isAdministrador, usuario, senha } = req.body;
     try {
         const membroAtual = await Membro.findById(req.params.id);
         if (!membroAtual) return res.status(404).json({ error: "Membro não encontrado" });
@@ -166,9 +166,25 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
             fotoPerfilUrl = req.file.path;
         }
 
+        let updateData = { 
+            nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl,
+            isAdministrador: isAdministrador === 'true'
+        };
+
+        if (updateData.isAdministrador) {
+            updateData.usuario = usuario;
+            if (senha) { // Só atualiza a senha se uma nova for fornecida
+                updateData.senha = await bcrypt.hash(senha, 10);
+            }
+        } else {
+            // Se for desmarcado como admin, limpa o usuário e a senha
+            updateData.usuario = null;
+            updateData.senha = null;
+        }
+
         const atualizado = await Membro.findByIdAndUpdate(
             req.params.id,
-            { nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl },
+            updateData,
             { new: true }
         );
         res.json(atualizado);
@@ -189,7 +205,7 @@ app.delete('/api/membros/:id', verificarToken, async (req, res) => {
     res.json({ success: true });
 });
 
-// HISTÓRICO - Agora extremamente rápido com índice
+// HISTÓRICO
 app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
     try {
         const historico = await Transacao.find({ 
@@ -199,7 +215,7 @@ app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Erro busca" }); }
 });
 
-// GESTÃO DE TRANSAÇÕES - Filtro por data em coleção única
+// GESTÃO DE TRANSAÇÕES
 app.get('/api/transacoes', verificarToken, async (req, res) => {
     const { ano, mes } = req.query;
     const start = new Date(Date.UTC(ano, mes, 1));
