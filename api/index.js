@@ -115,6 +115,14 @@ app.post('/api/login', async (req, res) => {
     res.status(401).json({ error: "Credenciais inválidas" });
 });
 
+app.post('/api/verify-master', verificarToken, (req, res) => {
+    const { senha } = req.body;
+    if (senha === "1234") {
+        return res.json({ success: true });
+    }
+    res.status(401).json({ error: "Senha mestre incorreta" });
+});
+
 app.get('/api/membros', verificarToken, async (req, res) => {
     res.json(await Membro.find({}, '-senha').sort({ nome: 1 }).lean());
 });
