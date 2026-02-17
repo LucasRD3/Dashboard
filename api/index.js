@@ -1,3 +1,4 @@
+// Dashboard/api/index.js
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -82,6 +83,7 @@ const Membro = mongoose.models.Membro || mongoose.model('Membro', new mongoose.S
     cpf: { type: String },
     telefone: { type: String },
     endereco: { type: String },
+    dataNascimento: { type: String },
     fotoPerfilUrl: { type: String }
 }));
 
@@ -137,10 +139,10 @@ app.get('/api/membros', verificarToken, async (req, res) => {
 });
 
 app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
-    const { nome, cpf, telefone, endereco } = req.body;
+    const { nome, cpf, telefone, endereco, dataNascimento } = req.body;
     const fotoPerfilUrl = req.file ? req.file.path : null;
     try {
-        const novo = await new Membro({ nome, cpf, telefone, endereco, fotoPerfilUrl }).save();
+        const novo = await new Membro({ nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl }).save();
         res.status(201).json(novo);
     } catch (err) {
         res.status(400).json({ error: "Erro ao salvar membro. Talvez o nome já exista." });
@@ -148,7 +150,7 @@ app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), asyn
 });
 
 app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
-    const { nome, cpf, telefone, endereco } = req.body;
+    const { nome, cpf, telefone, endereco, dataNascimento } = req.body;
     try {
         const membroAtual = await Membro.findById(req.params.id);
         if (!membroAtual) return res.status(404).json({ error: "Membro não encontrado" });
@@ -166,7 +168,7 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
 
         const atualizado = await Membro.findByIdAndUpdate(
             req.params.id,
-            { nome, cpf, telefone, endereco, fotoPerfilUrl },
+            { nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl },
             { new: true }
         );
         res.json(atualizado);
