@@ -66,7 +66,10 @@ const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema(
 }));
 
 const Membro = mongoose.models.Membro || mongoose.model('Membro', new mongoose.Schema({
-    nome: { type: String, required: true, unique: true }
+    nome: { type: String, required: true, unique: true },
+    cpf: { type: String },
+    telefone: { type: String },
+    endereco: { type: String }
 }));
 
 const verificarToken = (req, res, next) => {
@@ -121,7 +124,8 @@ app.get('/api/membros', verificarToken, async (req, res) => {
 });
 
 app.post('/api/membros', verificarToken, async (req, res) => {
-    const novo = await new Membro({ nome: req.body.nome }).save();
+    const { nome, cpf, telefone, endereco } = req.body;
+    const novo = await new Membro({ nome, cpf, telefone, endereco }).save();
     res.status(201).json(novo);
 });
 
