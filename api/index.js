@@ -106,18 +106,9 @@ app.post('/api/login', async (req, res) => {
     
     try {
         const admin = await Membro.findOne({ usuario, isAdministrador: true }).lean();
-        if (admin) {
-            let isValid = false;
-            if (admin.senha && admin.senha.startsWith('$2') && admin.senha.length === 60) {
-                isValid = await bcrypt.compare(senha, admin.senha);
-            } else {
-                isValid = admin.senha === senha;
-            }
-            
-            if (isValid) {
-                const token = jwt.sign({ id: admin._id }, SECRET_KEY, { expiresIn: '24h' });
-                return res.json({ auth: true, token });
-            }
+        if (admin && await bcrypt.compare(senha, admin.senha)) {
+            const token = jwt.sign({ id: admin._id }, SECRET_KEY, { expiresIn: '24h' });
+            return res.json({ auth: true, token });
         }
     } catch (err) { return res.status(500).json({ error: "Erro interno" }); }
     
@@ -133,16 +124,16 @@ app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), asyn
     const fotoPerfilUrl = req.file ? req.file.path : null;
     
     try {
-        let senhaFinal = null;
+        let hashedSenha = null;
         if (isAdministrador === 'true' && senha) {
-            senhaFinal = senha;
+            hashedSenha = await bcrypt.hash(senha, 10);
         }
 
         const novo = await new Membro({ 
             nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl,
             isAdministrador: isAdministrador === 'true',
             usuario: isAdministrador === 'true' ? usuario : null,
-            senha: senhaFinal
+            senha: hashedSenha
         }).save();
         res.status(201).json(novo);
     } catch (err) {
@@ -174,7 +165,7 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
         if (updateData.isAdministrador) {
             updateData.usuario = usuario;
             if (senha) { 
-                updateData.senha = senha;
+                updateData.senha = await bcrypt.hash(senha, 10);
             }
         } else {
             updateData.usuario = null;
@@ -201,26 +192,6 @@ app.delete('/api/membros/:id', verificarToken, async (req, res) => {
     }
     
     res.json({ success: true });
-});
-
-app.post('/api/membros/:id/senha', verificarToken, async (req, res) => {
-    const { masterSenha } = req.body;
-    if (masterSenha !== "1234") {
-        return res.status(401).json({ error: "Senha master incorreta!" });
-    }
-    
-    try {
-        const membro = await Membro.findById(req.params.id).lean();
-        if (!membro) return res.status(404).json({ error: "Membro não encontrado" });
-        
-        let senha = membro.senha || "";
-        if (senha.startsWith('$2') && senha.length === 60) {
-            senha = "⚠️ Senha antiga criptografada. Salve uma nova para poder visualizar.";
-        }
-        res.json({ senha });
-    } catch(err) {
-        res.status(500).json({ error: "Erro interno" });
-    }
 });
 
 app.get('/api/membros/historico/:nome', verificarToken, async (req, res) => {
