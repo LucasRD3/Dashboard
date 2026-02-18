@@ -87,6 +87,19 @@ const Membro = mongoose.models.Membro || mongoose.model('Membro', new mongoose.S
     senha: { type: String }
 }));
 
+const Igreja = mongoose.models.Igreja || mongoose.model('Igreja', new mongoose.Schema({
+    razaoSocial: String,
+    nomeFantasia: String,
+    cnpj: String,
+    email: String,
+    telefone: String,
+    endereco: String,
+    cidade: String,
+    estado: String,
+    cep: String,
+    dataFundacao: String
+}));
+
 const verificarToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(" ")[1];
@@ -259,6 +272,27 @@ app.delete('/api/transacoes/:id', verificarToken, async (req, res) => {
         await cloudinary.uploader.destroy(publicId).catch(console.error);
     }
     res.json({ success: true });
+});
+
+// Rotas para Informações da Igreja
+app.get('/api/igreja', verificarToken, async (req, res) => {
+    try {
+        let dados = await Igreja.findOne();
+        if (!dados) dados = {};
+        res.json(dados);
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar dados da igreja" }); }
+});
+
+app.post('/api/igreja', verificarToken, async (req, res) => {
+    try {
+        let dados = await Igreja.findOne();
+        if (dados) {
+            await Igreja.findByIdAndUpdate(dados._id, req.body);
+        } else {
+            await new Igreja(req.body).save();
+        }
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar dados da igreja" }); }
 });
 
 module.exports = app;
