@@ -25,7 +25,12 @@ const storage = new CloudinaryStorage({
     params: {
         folder: 'comprovantes',
         allowed_formats: ['jpg', 'png', 'pdf', 'jpeg'],
-        transformation: [{ width: 1000, crop: "limit", quality: "auto" }]
+        transformation: [{ width: 1000, crop: "limit", quality: "auto" }],
+        public_id: (req, file) => {
+            let name = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
+            name = name.replace(/\s+/g, '_').normalize('NFD').replace(/[\u0300-\u036f]/g, "");
+            return `${name}_${Date.now()}`;
+        }
     },
 });
 const upload = multer({ storage: storage });
