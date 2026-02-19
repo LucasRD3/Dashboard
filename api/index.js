@@ -14,8 +14,8 @@ const app = express();
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
-// Novas variáveis para o login Master
-const MASTER_USER = process.env.MASTER_USER || "iadev"; // Fallback para segurança local
+// Definição das variáveis de ambiente para o Master
+const MASTER_USER = process.env.MASTER_USER || "iadev"; 
 const MASTER_PASS = process.env.MASTER_PASS || "1234";
 
 cloudinary.config({
@@ -126,7 +126,6 @@ app.post('/api/login', async (req, res) => {
     usuario = usuario.trim();
     senha = senha.trim();
     
-    // Agora utiliza as variáveis de ambiente
     if (usuario.toLowerCase() === MASTER_USER.toLowerCase() && senha === MASTER_PASS) {
         const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
         return res.json({ auth: true, token });
@@ -147,9 +146,9 @@ app.post('/api/login', async (req, res) => {
     res.status(401).json({ error: "Credenciais inválidas" });
 });
 
+// Rota corrigida para usar a variável de ambiente
 app.post('/api/verify-master', verificarToken, (req, res) => {
     const { senha } = req.body;
-    // Agora utiliza a variável de ambiente
     if (senha && senha.trim() === MASTER_PASS) {
         return res.json({ success: true });
     }
