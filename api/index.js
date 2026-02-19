@@ -14,9 +14,9 @@ const app = express();
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
-// Definição das variáveis de ambiente para o Master
-const MASTER_USER = process.env.MASTER_USER || "iadev"; 
-const MASTER_PASS = process.env.MASTER_PASS || "1234";
+// As credenciais agora vêm EXCLUSIVAMENTE das variáveis de ambiente do Vercel
+const MASTER_USER = process.env.MASTER_USER; 
+const MASTER_PASS = process.env.MASTER_PASS;
 
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -58,7 +58,6 @@ const connectDB = async () => {
     try {
         await mongoose.connect(MONGO_URI, { maxPoolSize: 10 });
         isConnected = true;
-        console.log("Conectado ao MongoDB (Coleção Única)");
     } catch (err) {
         console.error("Erro MongoDB:", err.message);
     }
@@ -126,6 +125,7 @@ app.post('/api/login', async (req, res) => {
     usuario = usuario.trim();
     senha = senha.trim();
     
+    // Verificação usando APENAS as variáveis de ambiente
     if (usuario.toLowerCase() === MASTER_USER.toLowerCase() && senha === MASTER_PASS) {
         const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
         return res.json({ auth: true, token });
@@ -146,9 +146,9 @@ app.post('/api/login', async (req, res) => {
     res.status(401).json({ error: "Credenciais inválidas" });
 });
 
-// Rota corrigida para usar a variável de ambiente
 app.post('/api/verify-master', verificarToken, (req, res) => {
     const { senha } = req.body;
+    // Verificação de segurança para funções administrativas (como editar membros)
     if (senha && senha.trim() === MASTER_PASS) {
         return res.json({ success: true });
     }
@@ -177,7 +177,7 @@ app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), asyn
         }).save();
         res.status(201).json(novo);
     } catch (err) {
-        res.status(400).json({ error: "Erro ao salvar membro. Verifique se o nome não está duplicado." });
+        res.status(400).json({ error: "Erro ao salvar membro." });
     }
 });
 
@@ -188,7 +188,6 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
         if (!membroAtual) return res.status(404).json({ error: "Membro não encontrado" });
 
         let fotoPerfilUrl = membroAtual.fotoPerfilUrl;
-
         if (req.file) {
             if (membroAtual.fotoPerfilUrl) {
                 const publicId = `perfil_membros/${membroAtual.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
@@ -212,11 +211,7 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
             updateData.senha = null;
         }
 
-        const atualizado = await Membro.findByIdAndUpdate(
-            req.params.id,
-            updateData,
-            { new: true }
-        );
+        const atualizado = await Membro.findByIdAndUpdate(req.params.id, updateData, { new: true });
         res.json(atualizado);
     } catch (err) {
         res.status(500).json({ error: "Erro ao atualizar membro" });
@@ -225,12 +220,10 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
 
 app.delete('/api/membros/:id', verificarToken, async (req, res) => {
     const membro = await Membro.findByIdAndDelete(req.params.id);
-    
     if (membro?.fotoPerfilUrl) {
         const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
         await cloudinary.uploader.destroy(publicId).catch(console.error);
     }
-    
     res.json({ success: true });
 });
 
@@ -293,7 +286,7 @@ app.get('/api/igreja', verificarToken, async (req, res) => {
         let dados = await Igreja.findOne();
         if (!dados) dados = {};
         res.json(dados);
-    } catch (err) { res.status(500).json({ error: "Erro ao buscar dados da igreja" }); }
+    } catch (err) { res.status(500).json({ error: "Erro ao buscar dados" }); }
 });
 
 app.post('/api/igreja', verificarToken, async (req, res) => {
@@ -305,7 +298,7 @@ app.post('/api/igreja', verificarToken, async (req, res) => {
             await new Igreja(req.body).save();
         }
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: "Erro ao salvar dados da igreja" }); }
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar dados" }); }
 });
 
 module.exports = app;
