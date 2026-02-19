@@ -70,15 +70,11 @@ app.use(async (req, res, next) => {
 
 // --- SCHEMAS ---
 
+// ConfigSchema mantido apenas para evitar erros se houver chamadas legadas, 
+// mas não é mais usado para permissões de transações/membros.
 const ConfigSchema = new mongoose.Schema({
-    // Se true, admins comuns podem fazer. Se false, só o Master.
-    allowDeleteTransaction: { type: Boolean, default: true },
-    allowEditTransaction: { type: Boolean, default: true },
-    allowDeleteMember: { type: Boolean, default: true },
-    allowEditChurchInfo: { type: Boolean, default: true },
-    allowExportPDF: { type: Boolean, default: true },
-    allowManageAdmins: { type: Boolean, default: false } // Default false por segurança
-});
+    allowManageAdmins: { type: Boolean, default: false } 
+}, { strict: false });
 const Config = mongoose.models.Config || mongoose.model('Config', ConfigSchema);
 
 const TransacaoSchema = new mongoose.Schema({
@@ -90,7 +86,7 @@ const TransacaoSchema = new mongoose.Schema({
 });
 const Transacao = mongoose.models.Transacao || mongoose.model('Transacao', TransacaoSchema);
 
-const Membro = mongoose.models.Membro || mongoose.model('Membro', new mongoose.Schema({
+const MembroSchema = new mongoose.Schema({
     nome: { type: String, required: true, unique: true },
     cpf: { type: String },
     telefone: { type: String },
@@ -99,8 +95,11 @@ const Membro = mongoose.models.Membro || mongoose.model('Membro', new mongoose.S
     fotoPerfilUrl: { type: String },
     isAdministrador: { type: Boolean, default: false },
     usuario: { type: String },
-    senha: { type: String }
-}));
+    senha: { type: String },
+    // NOVO CAMPO: Armazena as permissões individuais do usuário
+    permissoes: { type: Object, default: {} } 
+});
+const Membro = mongoose.models.Membro || mongoose.model('Membro', MembroSchema);
 
 const Igreja = mongoose.models.Igreja || mongoose.model('Igreja', new mongoose.Schema({
     razaoSocial: String,
@@ -131,22 +130,25 @@ const verificarToken = (req, res, next) => {
     });
 };
 
-// Middleware para checar permissão dinâmica
+// Middleware para checar permissão dinâmica INDIVIDUAL
 const checkPerm = (permName) => {
     return async (req, res, next) => {
         // Se for Master, passa direto
         if (req.isMaster) return next();
 
-        // Se for Admin comum, checa no banco
+        // Se for Admin comum, checa AS PERMISSÕES DELE no banco
         try {
-            let config = await Config.findOne();
-            if (!config) config = await new Config().save(); // Cria default se não existir
-
-            if (config[permName]) {
-                next(); // Permissão ativada para admins
-            } else {
-                res.status(403).json({ error: "Função restrita ao Usuário Mestre." });
+            const admin = await Membro.findById(req.userId);
+            
+            if (admin && admin.isAdministrador) {
+                // Verifica se o objeto de permissões existe e se a flag específica é true
+                if (admin.permissoes && admin.permissoes[permName] === true) {
+                    return next(); // Permissão concedida
+                }
             }
+            
+            // Se chegou aqui, não tem permissão
+            res.status(403).json({ error: "Você não tem permissão para realizar esta ação." });
         } catch (err) {
             res.status(500).json({ error: "Erro ao verificar permissões." });
         }
@@ -168,6 +170,7 @@ app.post('/api/login', async (req, res) => {
     // Verificação Master
     if (usuario.toLowerCase() === MASTER_USER.toLowerCase() && senha === MASTER_PASS) {
         const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
+        // Master tem todas as permissões implícitas, não precisa enviar objeto
         return res.json({ auth: true, token, isMaster: true });
     }
     
@@ -180,7 +183,13 @@ app.post('/api/login', async (req, res) => {
 
         if (admin && await bcrypt.compare(senha, admin.senha)) {
             const token = jwt.sign({ id: admin._id }, SECRET_KEY, { expiresIn: '24h' });
-            return res.json({ auth: true, token, isMaster: false });
+            // ENVIA AS PERMISSÕES INDIVIDUAIS NO LOGIN
+            return res.json({ 
+                auth: true, 
+                token, 
+                isMaster: false,
+                permissoes: admin.permissoes || {} 
+            });
         }
     } catch (err) { return res.status(500).json({ error: "Erro interno" }); }
     
@@ -195,47 +204,39 @@ app.post('/api/verify-master', verificarToken, (req, res) => {
     res.status(401).json({ error: "Senha mestre incorreta" });
 });
 
-// --- Rotas de Configuração (NOVO) ---
+// --- Rotas de Configuração ---
+// Mantido para compatibilidade, mas retorna vazio ou básico já que agora é por usuário
 app.get('/api/config', verificarToken, async (req, res) => {
-    try {
-        let config = await Config.findOne();
-        if (!config) config = await new Config().save();
-        res.json(config);
-    } catch (e) { res.status(500).json({ error: "Erro configs" }); }
-});
-
-app.put('/api/config', verificarToken, async (req, res) => {
-    if (!req.isMaster) return res.status(403).json({ error: "Apenas Master pode alterar configurações." });
-    try {
-        // Garante que existe apenas um documento de config
-        let config = await Config.findOne();
-        if (!config) {
-            await new Config(req.body).save();
-        } else {
-            await Config.findOneAndUpdate({}, req.body);
-        }
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro ao salvar configs" }); }
+    res.json({}); 
 });
 
 // --- Membros ---
 
 app.get('/api/membros', verificarToken, async (req, res) => {
+    // Retorna permissoes também para que o Master possa ver/editar
     res.json(await Membro.find({}, '-senha').sort({ nome: 1 }).lean());
 });
 
 app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
-    // Se tentar criar admin, verifica permissão 'allowManageAdmins'
-    if (req.body.isAdministrador === 'true' && !req.isMaster) {
-        let config = await Config.findOne();
-        if (!config || !config.allowManageAdmins) {
-            return res.status(403).json({ error: "Você não tem permissão para criar Administradores." });
+    // Se tentar criar admin, verifica se quem está pedindo é Master ou tem permissão 'allowManageAdmins'
+    if (req.body.isAdministrador === 'true') {
+        if (!req.isMaster) {
+            const solicitante = await Membro.findById(req.userId);
+            if (!solicitante || !solicitante.permissoes || !solicitante.permissoes.allowManageAdmins) {
+                return res.status(403).json({ error: "Você não tem permissão para criar Administradores." });
+            }
         }
     }
 
     const { nome, cpf, telefone, endereco, dataNascimento, isAdministrador, usuario, senha } = req.body;
     const fotoPerfilUrl = req.file ? req.file.path : null;
     
+    // Processa permissões recebidas como string JSON
+    let permissoes = {};
+    if (req.body.permissoes) {
+        try { permissoes = JSON.parse(req.body.permissoes); } catch(e) {}
+    }
+
     try {
         let hashedSenha = null;
         if (isAdministrador === 'true' && senha) {
@@ -246,26 +247,33 @@ app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), asyn
             nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl,
             isAdministrador: isAdministrador === 'true',
             usuario: isAdministrador === 'true' ? usuario.trim() : null,
-            senha: hashedSenha
+            senha: hashedSenha,
+            permissoes: isAdministrador === 'true' ? permissoes : {}
         }).save();
         res.status(201).json(novo);
     } catch (err) {
-        res.status(400).json({ error: "Erro ao salvar membro." });
+        res.status(400).json({ error: "Erro ao salvar membro. Verifique se o nome já existe." });
     }
 });
 
-// Edit Membro - Protegido se tentar alterar status de admin
+// Edit Membro
 app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
     const { isAdministrador, usuario, senha, nome, cpf, telefone, endereco, dataNascimento } = req.body;
 
-    // Logica de permissão para gerenciar admins
+    // Lógica de permissão para gerenciar admins
     if (isAdministrador === 'true' || req.body.isAdministrador === true) {
         if (!req.isMaster) {
-            let config = await Config.findOne();
-            if (!config || !config.allowManageAdmins) {
+            const solicitante = await Membro.findById(req.userId);
+            if (!solicitante || !solicitante.permissoes || !solicitante.permissoes.allowManageAdmins) {
                 return res.status(403).json({ error: "Permissão negada para gerenciar Administradores." });
             }
         }
+    }
+
+    // Processa permissões
+    let permissoes = {};
+    if (req.body.permissoes) {
+        try { permissoes = JSON.parse(req.body.permissoes); } catch(e) {}
     }
 
     try {
@@ -274,7 +282,7 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
 
         let fotoPerfilUrl = membroAtual.fotoPerfilUrl;
         if (req.file) {
-            if (membroAtual.fotoPerfilUrl) {
+            if (membroAtual.fotoPerfilUrl && !membroAtual.fotoPerfilUrl.includes("svg+xml")) {
                 const publicId = `perfil_membros/${membroAtual.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
                 await cloudinary.uploader.destroy(publicId).catch(console.error);
             }
@@ -288,17 +296,20 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
 
         if (updateData.isAdministrador) {
             updateData.usuario = usuario ? usuario.trim() : usuario;
+            updateData.permissoes = permissoes; // Atualiza permissões
             if (senha) { 
                 updateData.senha = await bcrypt.hash(senha.trim(), 10);
             }
         } else {
             updateData.usuario = null;
             updateData.senha = null;
+            updateData.permissoes = {};
         }
 
         const atualizado = await Membro.findByIdAndUpdate(req.params.id, updateData, { new: true });
         res.json(atualizado);
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: "Erro ao atualizar membro" });
     }
 });
@@ -306,7 +317,7 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
 // Delete Membro - Protegido pela flag allowDeleteMember
 app.delete('/api/membros/:id', verificarToken, checkPerm('allowDeleteMember'), async (req, res) => {
     const membro = await Membro.findByIdAndDelete(req.params.id);
-    if (membro?.fotoPerfilUrl) {
+    if (membro?.fotoPerfilUrl && !membro.fotoPerfilUrl.includes("svg+xml")) {
         const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
         await cloudinary.uploader.destroy(publicId).catch(console.error);
     }
@@ -346,7 +357,7 @@ app.post('/api/transacoes', verificarToken, upload.single('comprovante'), async 
     res.status(201).json(nova);
 });
 
-// Edit Transação - Protegido
+// Edit Transação - Protegido por permissão individual
 app.put('/api/transacoes/:id', verificarToken, checkPerm('allowEditTransaction'), async (req, res) => {
     const atualizada = await Transacao.findByIdAndUpdate(
         req.params.id,
@@ -361,7 +372,7 @@ app.put('/api/transacoes/:id', verificarToken, checkPerm('allowEditTransaction')
     res.json(atualizada);
 });
 
-// Delete Transação - Protegido
+// Delete Transação - Protegido por permissão individual
 app.delete('/api/transacoes/:id', verificarToken, checkPerm('allowDeleteTransaction'), async (req, res) => {
     const transacao = await Transacao.findByIdAndDelete(req.params.id);
     if (transacao?.comprovanteUrl) {
@@ -381,7 +392,7 @@ app.get('/api/igreja', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Erro ao buscar dados" }); }
 });
 
-// Edit Igreja - Protegido
+// Edit Igreja - Protegido por permissão individual
 app.post('/api/igreja', verificarToken, checkPerm('allowEditChurchInfo'), async (req, res) => {
     try {
         let dados = await Igreja.findOne();
