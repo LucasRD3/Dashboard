@@ -52,12 +52,11 @@ const uploadPerfil = multer({ storage: storagePerfil });
 app.use(cors());
 app.use(bodyParser.json());
 
-let isConnected = false;
+// Otimização: Controle de conexão mais robusto para Serverless Vercel usando o readyState
 const connectDB = async () => {
-    if (isConnected) return;
+    if (mongoose.connection.readyState >= 1) return;
     try {
         await mongoose.connect(MONGO_URI, { maxPoolSize: 10 });
-        isConnected = true;
     } catch (err) {
         console.error("Erro MongoDB:", err.message);
     }
@@ -70,8 +69,6 @@ app.use(async (req, res, next) => {
 
 // --- SCHEMAS ---
 
-// ConfigSchema mantido apenas para evitar erros se houver chamadas legadas, 
-// mas não é mais usado para permissões de transações/membros.
 const ConfigSchema = new mongoose.Schema({
     allowManageAdmins: { type: Boolean, default: false } 
 }, { strict: false });
@@ -96,7 +93,6 @@ const MembroSchema = new mongoose.Schema({
     isAdministrador: { type: Boolean, default: false },
     usuario: { type: String },
     senha: { type: String },
-    // NOVO CAMPO: Armazena as permissões individuais do usuário
     permissoes: { type: Object, default: {} } 
 });
 const Membro = mongoose.models.Membro || mongoose.model('Membro', MembroSchema);
@@ -124,34 +120,24 @@ const verificarToken = (req, res, next) => {
     jwt.verify(token, SECRET_KEY, (err, decoded) => {
         if (err) return res.status(401).json({ error: "Sessão expirada" });
         req.userId = decoded.id;
-        // Verifica se é o Master User baseado no ID do token (que é o nome do usuário mestre)
         req.isMaster = (decoded.id === MASTER_USER);
+        // Otimização: Resgata permissões direto do payload do JWT, evitando DB query
+        req.permissoes = decoded.permissoes || {};
         next();
     });
 };
 
-// Middleware para checar permissão dinâmica INDIVIDUAL
+// Middleware para checar permissão dinâmica INDIVIDUAL otimizado
 const checkPerm = (permName) => {
-    return async (req, res, next) => {
-        // Se for Master, passa direto
+    return (req, res, next) => { // Removido o async pois não consulta mais o banco aqui
         if (req.isMaster) return next();
 
-        // Se for Admin comum, checa AS PERMISSÕES DELE no banco
-        try {
-            const admin = await Membro.findById(req.userId);
-            
-            if (admin && admin.isAdministrador) {
-                // Verifica se o objeto de permissões existe e se a flag específica é true
-                if (admin.permissoes && admin.permissoes[permName] === true) {
-                    return next(); // Permissão concedida
-                }
-            }
-            
-            // Se chegou aqui, não tem permissão
-            res.status(403).json({ error: "Você não tem permissão para realizar esta ação." });
-        } catch (err) {
-            res.status(500).json({ error: "Erro ao verificar permissões." });
+        // Checa as permissões validadas na assinatura do token
+        if (req.permissoes && req.permissoes[permName] === true) {
+            return next(); 
         }
+        
+        res.status(403).json({ error: "Você não tem permissão para realizar esta ação." });
     };
 };
 
@@ -169,8 +155,8 @@ app.post('/api/login', async (req, res) => {
     
     // Verificação Master
     if (usuario.toLowerCase() === MASTER_USER.toLowerCase() && senha === MASTER_PASS) {
-        const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
-        // Master tem todas as permissões implícitas, não precisa enviar objeto
+        // Master tem payload sem restrições
+        const token = jwt.sign({ id: usuario, permissoes: {} }, SECRET_KEY, { expiresIn: '24h' });
         return res.json({ auth: true, token, isMaster: true });
     }
     
@@ -182,8 +168,8 @@ app.post('/api/login', async (req, res) => {
         }).lean();
 
         if (admin && await bcrypt.compare(senha, admin.senha)) {
-            const token = jwt.sign({ id: admin._id }, SECRET_KEY, { expiresIn: '24h' });
-            // ENVIA AS PERMISSÕES INDIVIDUAIS NO LOGIN
+            // Otimização: Injetar permissões no token para não ter que consultar o BD em middlewares
+            const token = jwt.sign({ id: admin._id, permissoes: admin.permissoes || {} }, SECRET_KEY, { expiresIn: '24h' });
             return res.json({ 
                 auth: true, 
                 token, 
@@ -205,7 +191,6 @@ app.post('/api/verify-master', verificarToken, (req, res) => {
 });
 
 // --- Rotas de Configuração ---
-// Mantido para compatibilidade, mas retorna vazio ou básico já que agora é por usuário
 app.get('/api/config', verificarToken, async (req, res) => {
     res.json({}); 
 });
@@ -213,16 +198,14 @@ app.get('/api/config', verificarToken, async (req, res) => {
 // --- Membros ---
 
 app.get('/api/membros', verificarToken, async (req, res) => {
-    // Retorna permissoes também para que o Master possa ver/editar
     res.json(await Membro.find({}, '-senha').sort({ nome: 1 }).lean());
 });
 
 app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
-    // Se tentar criar admin, verifica se quem está pedindo é Master ou tem permissão 'allowManageAdmins'
     if (req.body.isAdministrador === 'true') {
         if (!req.isMaster) {
-            const solicitante = await Membro.findById(req.userId);
-            if (!solicitante || !solicitante.permissoes || !solicitante.permissoes.allowManageAdmins) {
+            // Otimização: Usa permissão do token ao invés de buscar no banco
+            if (!req.permissoes || !req.permissoes.allowManageAdmins) {
                 return res.status(403).json({ error: "Você não tem permissão para criar Administradores." });
             }
         }
@@ -231,7 +214,6 @@ app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), asyn
     const { nome, cpf, telefone, endereco, dataNascimento, isAdministrador, usuario, senha } = req.body;
     const fotoPerfilUrl = req.file ? req.file.path : null;
     
-    // Processa permissões recebidas como string JSON
     let permissoes = {};
     if (req.body.permissoes) {
         try { permissoes = JSON.parse(req.body.permissoes); } catch(e) {}
@@ -256,21 +238,18 @@ app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), asyn
     }
 });
 
-// Edit Membro
 app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
     const { isAdministrador, usuario, senha, nome, cpf, telefone, endereco, dataNascimento } = req.body;
 
-    // Lógica de permissão para gerenciar admins
     if (isAdministrador === 'true' || req.body.isAdministrador === true) {
         if (!req.isMaster) {
-            const solicitante = await Membro.findById(req.userId);
-            if (!solicitante || !solicitante.permissoes || !solicitante.permissoes.allowManageAdmins) {
+            // Otimização: Usa permissão do token ao invés de buscar no banco
+            if (!req.permissoes || !req.permissoes.allowManageAdmins) {
                 return res.status(403).json({ error: "Permissão negada para gerenciar Administradores." });
             }
         }
     }
 
-    // Processa permissões
     let permissoes = {};
     if (req.body.permissoes) {
         try { permissoes = JSON.parse(req.body.permissoes); } catch(e) {}
@@ -296,7 +275,7 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
 
         if (updateData.isAdministrador) {
             updateData.usuario = usuario ? usuario.trim() : usuario;
-            updateData.permissoes = permissoes; // Atualiza permissões
+            updateData.permissoes = permissoes; 
             if (senha) { 
                 updateData.senha = await bcrypt.hash(senha.trim(), 10);
             }
@@ -314,7 +293,6 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
     }
 });
 
-// Delete Membro - Protegido pela flag allowDeleteMember
 app.delete('/api/membros/:id', verificarToken, checkPerm('allowDeleteMember'), async (req, res) => {
     const membro = await Membro.findByIdAndDelete(req.params.id);
     if (membro?.fotoPerfilUrl && !membro.fotoPerfilUrl.includes("svg+xml")) {
@@ -357,7 +335,6 @@ app.post('/api/transacoes', verificarToken, upload.single('comprovante'), async 
     res.status(201).json(nova);
 });
 
-// Edit Transação - Protegido por permissão individual
 app.put('/api/transacoes/:id', verificarToken, checkPerm('allowEditTransaction'), async (req, res) => {
     const atualizada = await Transacao.findByIdAndUpdate(
         req.params.id,
@@ -372,7 +349,6 @@ app.put('/api/transacoes/:id', verificarToken, checkPerm('allowEditTransaction')
     res.json(atualizada);
 });
 
-// Delete Transação - Protegido por permissão individual
 app.delete('/api/transacoes/:id', verificarToken, checkPerm('allowDeleteTransaction'), async (req, res) => {
     const transacao = await Transacao.findByIdAndDelete(req.params.id);
     if (transacao?.comprovanteUrl) {
@@ -386,13 +362,13 @@ app.delete('/api/transacoes/:id', verificarToken, checkPerm('allowDeleteTransact
 
 app.get('/api/igreja', verificarToken, async (req, res) => {
     try {
-        let dados = await Igreja.findOne();
+        // Otimização: Adicionado lean() para performance 
+        let dados = await Igreja.findOne().lean();
         if (!dados) dados = {};
         res.json(dados);
     } catch (err) { res.status(500).json({ error: "Erro ao buscar dados" }); }
 });
 
-// Edit Igreja - Protegido por permissão individual
 app.post('/api/igreja', verificarToken, checkPerm('allowEditChurchInfo'), async (req, res) => {
     try {
         let dados = await Igreja.findOne();
