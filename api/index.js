@@ -125,10 +125,11 @@ app.post('/api/login', async (req, res) => {
     usuario = usuario.trim();
     senha = senha.trim();
     
-    // Verificação usando APENAS as variáveis de ambiente
+    // Verificação usando APENAS as variáveis de ambiente (Login Mestre)
     if (usuario.toLowerCase() === MASTER_USER.toLowerCase() && senha === MASTER_PASS) {
         const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
-        return res.json({ auth: true, token });
+        // RETORNA isMaster: true
+        return res.json({ auth: true, token, isMaster: true });
     }
     
     try {
@@ -139,7 +140,8 @@ app.post('/api/login', async (req, res) => {
 
         if (admin && await bcrypt.compare(senha, admin.senha)) {
             const token = jwt.sign({ id: admin._id }, SECRET_KEY, { expiresIn: '24h' });
-            return res.json({ auth: true, token });
+            // Login comum (não mestre)
+            return res.json({ auth: true, token, isMaster: false });
         }
     } catch (err) { return res.status(500).json({ error: "Erro interno" }); }
     
