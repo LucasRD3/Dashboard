@@ -14,6 +14,10 @@ const app = express();
 const SECRET_KEY = process.env.SECRET_KEY; 
 const MONGO_URI = process.env.MONGO_URI;
 
+// Novas variáveis para o login Master
+const MASTER_USER = process.env.MASTER_USER || "iadev"; // Fallback para segurança local
+const MASTER_PASS = process.env.MASTER_PASS || "1234";
+
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
@@ -117,27 +121,23 @@ app.get('/api/ping', (req, res) => res.json({ status: "online" }));
 app.post('/api/login', async (req, res) => {
     let { usuario, senha } = req.body;
     
-    // Sanitização básica para evitar erros
     if (!usuario || !senha) return res.status(400).json({ error: "Dados incompletos" });
 
     usuario = usuario.trim();
     senha = senha.trim();
     
-    // Verifica login Mestre (Case Insensitive para usuário)
-    if (usuario.toLowerCase() === "iadev" && senha === "1234") {
+    // Agora utiliza as variáveis de ambiente
+    if (usuario.toLowerCase() === MASTER_USER.toLowerCase() && senha === MASTER_PASS) {
         const token = jwt.sign({ id: usuario }, SECRET_KEY, { expiresIn: '24h' });
         return res.json({ auth: true, token });
     }
     
     try {
-        // Busca usuário no banco ignorando Case Sensitive (Regex)
-        // O regex ^...$ garante que busque a palavra exata, mas com a flag 'i' ignora maiúsculo/minúsculo
         const admin = await Membro.findOne({ 
             usuario: { $regex: new RegExp(`^${usuario}$`, 'i') }, 
             isAdministrador: true 
         }).lean();
 
-        // bcrypt verifica a senha (A senha do banco continua Case Sensitive por segurança)
         if (admin && await bcrypt.compare(senha, admin.senha)) {
             const token = jwt.sign({ id: admin._id }, SECRET_KEY, { expiresIn: '24h' });
             return res.json({ auth: true, token });
@@ -149,7 +149,8 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/verify-master', verificarToken, (req, res) => {
     const { senha } = req.body;
-    if (senha && senha.trim() === "1234") {
+    // Agora utiliza a variável de ambiente
+    if (senha && senha.trim() === MASTER_PASS) {
         return res.json({ success: true });
     }
     res.status(401).json({ error: "Senha mestre incorreta" });
@@ -166,13 +167,13 @@ app.post('/api/membros', verificarToken, uploadPerfil.single('fotoPerfil'), asyn
     try {
         let hashedSenha = null;
         if (isAdministrador === 'true' && senha) {
-            hashedSenha = await bcrypt.hash(senha.trim(), 10); // Trim na senha ao criar
+            hashedSenha = await bcrypt.hash(senha.trim(), 10);
         }
 
         const novo = await new Membro({ 
             nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl,
             isAdministrador: isAdministrador === 'true',
-            usuario: isAdministrador === 'true' ? usuario.trim() : null, // Trim no usuario ao criar
+            usuario: isAdministrador === 'true' ? usuario.trim() : null,
             senha: hashedSenha
         }).save();
         res.status(201).json(novo);
@@ -205,7 +206,7 @@ app.put('/api/membros/:id', verificarToken, uploadPerfil.single('fotoPerfil'), a
         if (updateData.isAdministrador) {
             updateData.usuario = usuario ? usuario.trim() : usuario;
             if (senha) { 
-                updateData.senha = await bcrypt.hash(senha.trim(), 10); // Trim na senha ao atualizar
+                updateData.senha = await bcrypt.hash(senha.trim(), 10);
             }
         } else {
             updateData.usuario = null;
@@ -288,7 +289,6 @@ app.delete('/api/transacoes/:id', verificarToken, async (req, res) => {
     res.json({ success: true });
 });
 
-// Rotas para Informações da Igreja
 app.get('/api/igreja', verificarToken, async (req, res) => {
     try {
         let dados = await Igreja.findOne();
