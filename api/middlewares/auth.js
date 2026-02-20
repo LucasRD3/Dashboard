@@ -1,15 +1,19 @@
 // Dashboard/api/middlewares/auth.js
 const jwt = require('jsonwebtoken');
 
+// Fallbacks de segurança
+const SECRET_KEY = process.env.SECRET_KEY || 'iadev_secret_default';
+const MASTER_USER = process.env.MASTER_USER || 'admin';
+
 const verificarToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(" ")[1];
     if (!token) return res.status(403).json({ error: "Token não fornecido" });
 
-    jwt.verify(token, process.env.SECRET_KEY, (err, decoded) => {
+    jwt.verify(token, SECRET_KEY, (err, decoded) => {
         if (err) return res.status(401).json({ error: "Sessão expirada" });
         req.userId = decoded.id;
-        req.isMaster = (decoded.id === process.env.MASTER_USER);
+        req.isMaster = (decoded.id === MASTER_USER);
         req.permissoes = decoded.permissoes || {};
         next();
     });
