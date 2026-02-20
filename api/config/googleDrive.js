@@ -1,16 +1,19 @@
 // Dashboard/api/config/googleDrive.js
 const { google } = require('googleapis');
 
-const credentials = {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null,
-};
+// Configura o cliente OAuth2 com as credenciais da sua conta real
+const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    'https://developers.google.com/oauthplayground' // Redirect URI obrigatório para validar o token
+);
 
-const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/drive.file'],
+// Define o token de atualização perpétuo
+oauth2Client.setCredentials({
+    refresh_token: process.env.GOOGLE_REFRESH_TOKEN
 });
 
-const drive = google.drive({ version: 'v3', auth });
+// Inicializa a API do Drive com a sua conta
+const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
 module.exports = drive;
