@@ -11,8 +11,10 @@ router.get('/', verificarToken, async (req, res) => {
         const { ano, mes } = req.query;
         if (!ano || !mes) return res.json([]);
 
-        const start = new Date(Date.UTC(ano, mes, 1));
-        const end = new Date(Date.UTC(ano, parseInt(mes) + 1, 0, 23, 59, 59));
+        // Define início do mês às 00:00:00
+        const start = new Date(Date.UTC(parseInt(ano), parseInt(mes), 1, 0, 0, 0));
+        // Define fim do mês às 23:59:59
+        const end = new Date(Date.UTC(parseInt(ano), parseInt(mes) + 1, 0, 23, 59, 59));
 
         const transacoes = await Transacao.find({
             data: { $gte: start, $lte: end }
@@ -29,7 +31,7 @@ router.get('/saldo-anterior', verificarToken, async (req, res) => {
         const { ano, mes } = req.query;
         if (!ano || !mes) return res.json({ saldoAnterior: 0 });
 
-        const start = new Date(Date.UTC(ano, mes, 1));
+        const start = new Date(Date.UTC(parseInt(ano), parseInt(mes), 1, 0, 0, 0));
         
         const transacoesAnteriores = await Transacao.find({
             data: { $lt: start }

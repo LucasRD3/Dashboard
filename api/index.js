@@ -6,7 +6,7 @@ const bodyParser = require('body-parser');
 // Importar configuração do banco
 const connectDB = require('./config/db');
 
-// Importar todas as rotas - Nomes devem coincidir exatamente com os arquivos no sistema
+// Importar todas as rotas
 const authRoutes = require('./routes/auth.routes');
 const membrosRoutes = require('./routes/membros.routes');
 const transacoesRoutes = require('./routes/transacoes.routes');
@@ -26,7 +26,7 @@ app.use(async (req, res, next) => {
 // Registrar os endpoints usando as rotas separadas
 app.use('/api', authRoutes); 
 app.use('/api/membros', membrosRoutes); 
-app.use('/api/transacoes', transacoesRoutes); 
+app.use('/api/transacoes', transacoesRoutes); // Esta rota engloba /api/transacoes/saldo-anterior
 app.use('/api/igreja', igrejaRoutes); 
 
 module.exports = app;
