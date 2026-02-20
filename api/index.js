@@ -324,6 +324,27 @@ app.get('/api/transacoes', verificarToken, async (req, res) => {
     res.json(transacoes);
 });
 
+app.get('/api/saldo-anterior', verificarToken, async (req, res) => {
+    try {
+        const { ano, mes } = req.query;
+        const start = new Date(Date.UTC(ano, mes, 1));
+        
+        const transacoesAnteriores = await Transacao.find({
+            data: { $lt: start }
+        }).lean();
+
+        let saldoAnterior = 0;
+        transacoesAnteriores.forEach(t => {
+            if (t.tipo === 'dizimo' || t.tipo === 'oferta') saldoAnterior += t.valor;
+            else if (t.tipo === 'gastos') saldoAnterior -= t.valor;
+        });
+
+        res.json({ saldoAnterior });
+    } catch (err) {
+        res.status(500).json({ error: "Erro ao calcular saldo anterior" });
+    }
+});
+
 app.post('/api/transacoes', verificarToken, upload.single('comprovante'), async (req, res) => {
     const nova = await new Transacao({
         descricao: req.body.descricao,
