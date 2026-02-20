@@ -17,8 +17,15 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-// Garante conexão ao banco antes de processar rotas
-connectDB();
+// Garante conexão ao banco antes de processar rotas (Await em ambiente Serverless)
+app.use(async (req, res, next) => {
+    try {
+        await connectDB();
+        next();
+    } catch (err) {
+        res.status(500).json({ error: "Erro de conexão com o banco de dados" });
+    }
+});
 
 // Registrar os endpoints
 app.use('/api', authRoutes); 
