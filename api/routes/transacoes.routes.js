@@ -11,9 +11,7 @@ router.get('/', verificarToken, async (req, res) => {
         const { ano, mes } = req.query;
         if (!ano || !mes) return res.json([]);
 
-        // Define início do mês às 00:00:00
         const start = new Date(Date.UTC(parseInt(ano), parseInt(mes), 1, 0, 0, 0));
-        // Define fim do mês às 23:59:59
         const end = new Date(Date.UTC(parseInt(ano), parseInt(mes) + 1, 0, 23, 59, 59));
 
         const transacoes = await Transacao.find({
@@ -33,24 +31,29 @@ router.get('/saldo-anterior', verificarToken, async (req, res) => {
 
         const start = new Date(Date.UTC(parseInt(ano), parseInt(mes), 1, 0, 0, 0));
         
-        const transacoesAnteriores = await Transacao.find({
-            data: { $lt: start }
-        }).lean();
-
-        let saldoAnterior = 0;
-        transacoesAnteriores.forEach(t => {
-            let valor = Number(t.valor) || 0;
-            let tipo = (t.tipo || "").toString().toLowerCase().trim();
-            
-            if (tipo === 'dizimo' || tipo === 'oferta') {
-                saldoAnterior += valor;
-            } else {
-                saldoAnterior -= valor;
+        // Otimização: Agregação no Banco de Dados em vez de processar no Node.js
+        const resultado = await Transacao.aggregate([
+            { $match: { data: { $lt: start } } },
+            {
+                $group: {
+                    _id: null,
+                    total: {
+                        $sum: {
+                            $cond: [
+                                { $in: [{ $toLower: { $trim: { input: "$tipo" } } }, ["dizimo", "oferta"]] },
+                                "$valor",
+                                { $multiply: ["$valor", -1] }
+                            ]
+                        }
+                    }
+                }
             }
-        });
+        ]);
 
+        const saldoAnterior = resultado.length > 0 ? resultado[0].total : 0;
         res.json({ saldoAnterior });
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: "Erro ao calcular saldo anterior" });
     }
 });

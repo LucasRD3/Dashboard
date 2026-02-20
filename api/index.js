@@ -17,16 +17,13 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-// Middleware para garantir conexão Serverless (Vercel) antes das requisições
-app.use(async (req, res, next) => {
-    await connectDB();
-    next();
-});
+// Garante conexão ao banco antes de processar rotas
+connectDB();
 
-// Registrar os endpoints usando as rotas separadas
+// Registrar os endpoints
 app.use('/api', authRoutes); 
 app.use('/api/membros', membrosRoutes); 
-app.use('/api/transacoes', transacoesRoutes); // Esta rota engloba /api/transacoes/saldo-anterior
+app.use('/api/transacoes', transacoesRoutes); 
 app.use('/api/igreja', igrejaRoutes); 
 
 module.exports = app;
