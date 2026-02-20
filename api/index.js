@@ -11,6 +11,7 @@ const authRoutes = require('./routes/auth.routes');
 const membrosRoutes = require('./routes/membros.routes');
 const transacoesRoutes = require('./routes/transacoes.routes');
 const igrejaRoutes = require('./routes/igreja.routes');
+const backupRoutes = require('./routes/backup.routes');
 
 const app = express();
 
@@ -32,5 +33,6 @@ app.use('/api', authRoutes);
 app.use('/api/membros', membrosRoutes); 
 app.use('/api/transacoes', transacoesRoutes); 
 app.use('/api/igreja', igrejaRoutes); 
+app.use('/api/backup', backupRoutes);
 
 module.exports = app;
