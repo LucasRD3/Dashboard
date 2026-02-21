@@ -35,4 +35,12 @@ app.use('/api/transacoes', transacoesRoutes);
 app.use('/api/igreja', igrejaRoutes); 
 app.use('/api/backup', backupRoutes);
 
+// Rota raiz para evitar 404 nos logs da Vercel
+app.get('/', (req, res) => {
+    res.json({ status: "API Online", message: "IADEV Financeiro API" });
+});
+
+// Rota para favicon para evitar 404
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
 module.exports = app;
