@@ -18,7 +18,7 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-// Garante conexão ao banco antes de processar rotas (Await em ambiente Serverless)
+// Garante conexão ao banco antes de processar rotas
 app.use(async (req, res, next) => {
     try {
         await connectDB();
@@ -40,7 +40,7 @@ app.get('/', (req, res) => {
     res.json({ status: "API Online", message: "IADEV Financeiro API" });
 });
 
-// Rota para favicon para evitar 404
-app.get('/favicon.ico', (req, res) => res.status(204).end());
+// Tratamento de ícones para silenciar logs de erro 404
+app.get(['/favicon.ico', '/favicon.png'], (req, res) => res.status(204).end());
 
 module.exports = app;
