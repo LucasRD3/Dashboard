@@ -9,7 +9,7 @@ const { cloudinary, uploadPerfil } = require('../config/cloudinary');
 const router = express.Router();
 
 router.get('/', verificarToken, async (req, res) => {
-    res.json(await Membro.find({}, 'nome fotoPerfilUrl telefone isAdministrador').sort({ nome: 1 }).lean());
+    res.json(await Membro.find({}).sort({ nome: 1 }).lean());
 });
 
 router.post('/', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
