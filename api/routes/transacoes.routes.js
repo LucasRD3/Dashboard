@@ -24,6 +24,26 @@ router.get('/', verificarToken, async (req, res) => {
     }
 });
 
+router.get('/periodo', verificarToken, async (req, res) => {
+    try {
+        const { inicio, fim } = req.query;
+        if (!inicio || !fim) return res.json([]);
+
+        // Configura as datas para cobrir desde as 00:00:00 do dia de início até as 23:59:59 do dia de fim (UTC)
+        const start = new Date(`${inicio}T00:00:00.000Z`);
+        const end = new Date(`${fim}T23:59:59.999Z`);
+
+        const transacoes = await Transacao.find({
+            data: { $gte: start, $lte: end }
+        }).sort({ data: -1 }).lean();
+        
+        res.json(transacoes);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Erro ao buscar transações por período" });
+    }
+});
+
 router.get('/saldo-anterior', verificarToken, async (req, res) => {
     try {
         const { ano, mes } = req.query;
@@ -31,7 +51,6 @@ router.get('/saldo-anterior', verificarToken, async (req, res) => {
 
         const start = new Date(Date.UTC(parseInt(ano), parseInt(mes), 1, 0, 0, 0));
         
-        // Otimização: Agregação no Banco de Dados em vez de processar no Node.js
         const resultado = await Transacao.aggregate([
             { $match: { data: { $lt: start } } },
             {
