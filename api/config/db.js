@@ -1,7 +1,6 @@
 // Dashboard/api/config/db.js
 const mongoose = require('mongoose');
 
-// Cache da conexão para reuso na Vercel (Serverless)
 let isConnected = false;
 
 const connectDB = async () => {
@@ -9,7 +8,7 @@ const connectDB = async () => {
 
     try {
         const db = await mongoose.connect(process.env.MONGO_URI, {
-            maxPoolSize: 10,
+            maxPoolSize: 3,
             serverSelectionTimeoutMS: 5000,
             socketTimeoutMS: 45000,
         });
