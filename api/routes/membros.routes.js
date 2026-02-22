@@ -9,7 +9,7 @@ const { cloudinary, uploadPerfil } = require('../config/cloudinary');
 const router = express.Router();
 
 router.get('/', verificarToken, async (req, res) => {
-    res.json(await Membro.find({}, '-senha').sort({ nome: 1 }).lean());
+    res.json(await Membro.find({}, 'nome fotoPerfilUrl telefone isAdministrador').sort({ nome: 1 }).lean());
 });
 
 router.post('/', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
@@ -115,7 +115,7 @@ router.get('/historico/:nome', verificarToken, async (req, res) => {
     try {
         const historico = await Transacao.find({ 
             descricao: { $regex: req.params.nome, $options: 'i' } 
-        }).sort({ data: -1 }).lean();
+        }).sort({ data: -1 }).limit(20).lean();
         res.json(historico);
     } catch (err) { res.status(500).json({ error: "Erro busca" }); }
 });
