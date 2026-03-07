@@ -1,5 +1,6 @@
 // Dashboard/api/middlewares/auth.js
 const jwt = require('jsonwebtoken');
+const Log = require('../models/Log');
 
 // Fallbacks de segurança
 const SECRET_KEY = process.env.SECRET_KEY || 'iadev_secret_default';
@@ -29,4 +30,33 @@ const checkPerm = (permName) => {
     };
 };
 
-module.exports = { verificarToken, checkPerm };
+const registrarAuditoria = async (req, res, next) => {
+    const { method, originalUrl, body, params } = req;
+
+    // Intercepta a finalização da resposta para gravar o log apenas em caso de sucesso
+    res.on('finish', async () => {
+        if (['PUT', 'DELETE'].includes(method) && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+                const detalhes = method === 'PUT' ? { ...body } : { targetId: params.id || originalUrl.split('/').pop() };
+                
+                // Sanitização de dados sensíveis no log
+                if (detalhes.senha) delete detalhes.senha;
+                if (detalhes.fotoPerfil) delete detalhes.fotoPerfil;
+                if (detalhes.comprovante) delete detalhes.comprovante;
+
+                await new Log({
+                    usuarioId: req.userId || 'sistema/desconhecido',
+                    acao: method === 'PUT' ? 'ATUALIZAÇÃO' : 'EXCLUSÃO',
+                    metodo: method,
+                    recurso: originalUrl,
+                    detalhes: detalhes
+                }).save();
+            } catch (err) {
+                console.error("Erro ao registrar trilha de auditoria:", err.message);
+            }
+        }
+    });
+    next();
+};
+
+module.exports = { verificarToken, checkPerm, registrarAuditoria };
