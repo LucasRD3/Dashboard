@@ -8,6 +8,7 @@ const Membro = require('../models/Membro');
 const Transacao = require('../models/Transacao');
 const Igreja = require('../models/Igreja');
 const Config = require('../models/Config');
+const Log = require('../models/Log'); // Importação do modelo de Log
 
 const router = express.Router();
 
@@ -57,6 +58,15 @@ router.get('/auto', async (req, res) => {
             fields: 'id, webViewLink'
         });
 
+        // Registo de Auditoria para Backup Automático
+        await new Log({
+            usuarioId: 'sistema/cron',
+            acao: 'BACKUP',
+            metodo: 'GET',
+            recurso: '/api/backup/auto',
+            detalhes: { tipo: 'Automático', fileId: uploadedFile.data.id }
+        }).save();
+
         res.json({ 
             success: true, 
             message: "Backup automático realizado com sucesso",
@@ -69,7 +79,7 @@ router.get('/auto', async (req, res) => {
     }
 });
 
-// Mantém a rota original para backup manual via Dashboard
+// Rota para backup manual via Dashboard
 router.post('/', verificarToken, async (req, res) => {
     if (!req.isMaster) {
         return res.status(403).json({ error: "Apenas o administrador mestre pode realizar backups." });
@@ -111,6 +121,15 @@ router.post('/', verificarToken, async (req, res) => {
             media: media,
             fields: 'id, webViewLink'
         });
+
+        // Registo de Auditoria para Backup Manual
+        await new Log({
+            usuarioId: req.userId,
+            acao: 'BACKUP',
+            metodo: 'POST',
+            recurso: '/api/backup',
+            detalhes: { tipo: 'Manual', fileId: uploadedFile.data.id, link: uploadedFile.data.webViewLink }
+        }).save();
 
         res.json({ 
             success: true, 
