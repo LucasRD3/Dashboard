@@ -21,7 +21,7 @@ const archiveOldLogs = async () => {
     const dataFormatada = new Date().toISOString().split('T')[0];
     const timestampAtual = Date.now();
     const fileName = `archive_logs_${dataFormatada}_${timestampAtual}.json`;
-    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+    const folderId = process.env.GOOGLE_DRIVE_LOGS_FOLDER_ID;
 
     const uploadedFile = await drive.files.create({
         resource: {

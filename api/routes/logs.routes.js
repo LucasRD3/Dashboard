@@ -8,7 +8,7 @@ const router = express.Router();
 
 /*
  * INTEGRAÇÃO FUTURA DE LOGS ANTIGOS NA INTERFACE:
- * 1. Endpoint de Listagem: Criar rota que chame drive.files.list buscando arquivos com "name contains 'archive_logs_' and trashed = false" no folder GOOGLE_DRIVE_FOLDER_ID.
+ * 1. Endpoint de Listagem: Criar rota que chame drive.files.list buscando arquivos com "name contains 'archive_logs_' and trashed = false" no folder GOOGLE_DRIVE_LOGS_FOLDER_ID.
  * 2. Endpoint de Leitura: Criar rota que recupere o conteúdo do arquivo via drive.files.get({ fileId: id_do_arquivo, alt: 'media' }) e devolva o JSON para o front-end renderizar a tabela.
  */
 
