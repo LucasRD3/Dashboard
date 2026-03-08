@@ -140,7 +140,7 @@ router.post('/', verificarToken, async (req, res) => {
     }
 });
 
-// Listar backups disponíveis no Google Drive
+// Listar backups disponíveis no Google Drive e checar cota
 router.get('/list', verificarToken, async (req, res) => {
     if (!req.isMaster) return res.status(403).json({ error: "Acesso negado." });
     try {
@@ -150,7 +150,12 @@ router.get('/list', verificarToken, async (req, res) => {
             fields: 'files(id, name, createdTime, size)',
             orderBy: 'createdTime desc'
         });
-        res.json(response.data.files);
+        const about = await drive.about.get({ fields: 'storageQuota' });
+        
+        res.json({ 
+            files: response.data.files,
+            quota: about.data.storageQuota
+        });
     } catch (error) {
         res.status(500).json({ error: "Erro ao listar arquivos do Drive." });
     }
