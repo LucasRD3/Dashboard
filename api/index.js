@@ -16,6 +16,7 @@ const transacoesRoutes = require('./routes/transacoes.routes');
 const igrejaRoutes = require('./routes/igreja.routes');
 const backupRoutes = require('./routes/backup.routes');
 const logsRoutes = require('./routes/logs.routes');
+const departamentosRoutes = require('./routes/departamentos.routes');
 
 const app = express();
 
@@ -42,6 +43,7 @@ app.use('/api/transacoes', transacoesRoutes);
 app.use('/api/igreja', igrejaRoutes); 
 app.use('/api/backup', backupRoutes);
 app.use('/api/logs', logsRoutes);
+app.use('/api/departamentos', departamentosRoutes);
 
 // Rota raiz para evitar 404 nos logs da Vercel
 app.get('/', (req, res) => {
