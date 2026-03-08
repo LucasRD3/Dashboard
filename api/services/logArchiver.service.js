@@ -4,8 +4,9 @@ const Log = require('../models/Log');
 const drive = require('../config/googleDrive');
 
 const archiveOldLogs = async () => {
+    // ALTERAÇÃO TEMPORÁRIA PARA TESTE: Pega todos os logs criados até amanhã
     const limiteData = new Date();
-    limiteData.setDate(limiteData.getDate() - 30);
+    limiteData.setDate(limiteData.getDate() + 1);
 
     const logsParaArquivar = await Log.find({ timestamp: { $lt: limiteData } }).lean();
 
@@ -47,7 +48,7 @@ const archiveOldLogs = async () => {
         metodo: 'GET',
         recurso: '/api/logs/archive',
         detalhes: { 
-            resumo: `SISTEMA realizou BACKUP/LIMPEZA de ${logsParaArquivar.length} logs antigos`,
+            resumo: `SISTEMA realizou BACKUP/LIMPEZA de ${logsParaArquivar.length} logs de teste`,
             fileId: uploadedFile.data.id
         }
     }).save();
