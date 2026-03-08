@@ -1,4 +1,3 @@
-// Dashboard/api/routes/transacoes.routes.js
 const express = require('express');
 const Transacao = require('../models/Transacao');
 const { verificarToken, checkPerm } = require('../middlewares/auth');
@@ -28,19 +27,14 @@ router.get('/periodo', verificarToken, async (req, res) => {
     try {
         const { inicio, fim } = req.query;
         if (!inicio || !fim) return res.json([]);
-
-        // Configura as datas para cobrir desde as 00:00:00 do dia de início até as 23:59:59 do dia de fim (UTC)
         const start = new Date(`${inicio}T00:00:00.000Z`);
         const end = new Date(`${fim}T23:59:59.999Z`);
-
         const transacoes = await Transacao.find({
             data: { $gte: start, $lte: end }
         }).sort({ data: -1 }).lean();
-        
         res.json(transacoes);
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Erro ao buscar transações por período" });
+        res.status(500).json({ error: "Erro ao buscar período" });
     }
 });
 
@@ -48,9 +42,7 @@ router.get('/saldo-anterior', verificarToken, async (req, res) => {
     try {
         const { ano, mes } = req.query;
         if (!ano || !mes) return res.json({ saldoAnterior: 0 });
-
         const start = new Date(Date.UTC(parseInt(ano), parseInt(mes), 1, 0, 0, 0));
-        
         const resultado = await Transacao.aggregate([
             { $match: { data: { $lt: start } } },
             {
@@ -68,17 +60,16 @@ router.get('/saldo-anterior', verificarToken, async (req, res) => {
                 }
             }
         ]);
-
         const saldoAnterior = resultado.length > 0 ? resultado[0].total : 0;
         res.json({ saldoAnterior });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Erro ao calcular saldo anterior" });
+        res.status(500).json({ error: "Erro saldo" });
     }
 });
 
 router.post('/', verificarToken, upload.single('comprovante'), async (req, res) => {
     try {
+        res.locals.auditTarget = req.body.descricao; // Para o log
         const nova = await new Transacao({
             descricao: req.body.descricao,
             valor: parseFloat(req.body.valor) || 0,
@@ -94,6 +85,7 @@ router.post('/', verificarToken, upload.single('comprovante'), async (req, res) 
 
 router.put('/:id', verificarToken, checkPerm('allowEditTransaction'), async (req, res) => {
     try {
+        res.locals.auditTarget = req.body.descricao; // Para o log
         const atualizada = await Transacao.findByIdAndUpdate(
             req.params.id,
             {
@@ -106,20 +98,24 @@ router.put('/:id', verificarToken, checkPerm('allowEditTransaction'), async (req
         );
         res.json(atualizada);
     } catch (err) {
-        res.status(500).json({ error: "Erro ao atualizar transação" });
+        res.status(500).json({ error: "Erro ao atualizar" });
     }
 });
 
 router.delete('/:id', verificarToken, checkPerm('allowDeleteTransaction'), async (req, res) => {
     try {
-        const transacao = await Transacao.findByIdAndDelete(req.params.id);
-        if (transacao?.comprovanteUrl) {
-            const publicId = `comprovantes/${transacao.comprovanteUrl.split('/').pop().split('.')[0]}`;
-            await cloudinary.uploader.destroy(publicId).catch(console.error);
+        const transacao = await Transacao.findById(req.params.id);
+        if (transacao) {
+            res.locals.auditTarget = transacao.descricao; // Para o log
+            await Transacao.findByIdAndDelete(req.params.id);
+            if (transacao.comprovanteUrl) {
+                const publicId = `comprovantes/${transacao.comprovanteUrl.split('/').pop().split('.')[0]}`;
+                await cloudinary.uploader.destroy(publicId).catch(console.error);
+            }
         }
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: "Erro ao deletar transação" });
+        res.status(500).json({ error: "Erro ao deletar" });
     }
 });
 

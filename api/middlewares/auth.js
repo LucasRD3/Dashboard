@@ -28,30 +28,32 @@ const checkPerm = (permName) => {
 };
 
 const registrarAuditoria = async (req, res, next) => {
-    const { method, originalUrl, body, params, headers } = req;
+    // Capturamos apenas os metadados fixos no início
+    const { method, originalUrl, params, headers } = req;
     const ip = headers['x-forwarded-for'] || req.socket.remoteAddress;
 
     res.on('finish', async () => {
-        const ignoreUrls = ['/api/ping', '/api/logs', '/api/config'];
+        // Ignorar rotas de leitura e o próprio login (que já tem log interno)
+        const ignoreUrls = ['/api/ping', '/api/logs', '/api/config', '/api/login'];
         if (ignoreUrls.some(url => originalUrl.includes(url))) return;
 
         if (['POST', 'PUT', 'DELETE'].includes(method) && res.statusCode >= 200 && res.statusCode < 400) {
             try {
+                // Acessamos req.body AQUI, após o processamento das rotas/multer
+                const body = req.body || {};
                 let acaoDesc = method === 'POST' ? 'CADASTRO' : (method === 'DELETE' ? 'EXCLUSÃO' : 'ATUALIZAÇÃO');
+                
+                // Prioridade para auditTarget definido na rota, depois campos comuns do body
                 let target = res.locals.auditTarget || body.nome || body.descricao || params.id || 'recurso';
                 let resumo = `${req.userNome || 'Sistema'} realizou ${acaoDesc} em ${target}`;
 
                 if (originalUrl.includes('/membros')) {
-                    if (method === 'POST') resumo = `${req.userNome} cadastrou o membro: ${body.nome}`;
+                    if (method === 'POST') resumo = `${req.userNome} cadastrou o membro: ${body.nome || target}`;
                     if (method === 'DELETE') resumo = `${req.userNome} excluiu o membro: ${res.locals.auditTarget || target}`;
-                    if (method === 'PUT') resumo = `${req.userNome} atualizou dados de: ${body.nome || target}`;
+                    if (method === 'PUT') resumo = `${req.userNome} alterou dados de: ${body.nome || target}`;
                 } else if (originalUrl.includes('/transacoes')) {
-                    if (method === 'POST') resumo = `${req.userNome} registrou ${body.tipo}: ${body.descricao}`;
-                    if (method === 'DELETE') resumo = `${req.userNome} removeu transação: ${target}`;
-                    if (method === 'PUT') resumo = `${req.userNome} editou transação: ${body.descricao || target}`;
-                } else if (originalUrl.includes('/login')) {
-                    acaoDesc = 'AUTENTICAÇÃO';
-                    resumo = `Login realizado por: ${req.userNome}`;
+                    if (method === 'POST') resumo = `${req.userNome} registrou ${body.tipo || 'transação'}: ${body.descricao || target}`;
+                    if (method === 'DELETE') resumo = `${req.userNome} removeu a transação: ${res.locals.auditTarget || target}`;
                 }
 
                 const detalhes = { 
@@ -59,8 +61,9 @@ const registrarAuditoria = async (req, res, next) => {
                     resumo: resumo 
                 };
                 
-                const sensitiveFields = ['senha', 'fotoPerfil', 'comprovante', 'permissoes'];
-                sensitiveFields.forEach(f => delete detalhes[f]);
+                // Limpeza de campos sensíveis/pesados
+                const sensitive = ['senha', 'fotoPerfil', 'comprovante', 'permissoes'];
+                sensitive.forEach(f => delete detalhes[f]);
 
                 await new Log({
                     usuarioId: req.userNome || 'sistema/anonimo',

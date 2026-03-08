@@ -21,6 +21,7 @@ router.post('/', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, 
     }
 
     const { nome, cpf, telefone, endereco, dataNascimento, isAdministrador, usuario, senha } = req.body;
+    res.locals.auditTarget = nome; // Para o log
     const fotoPerfilUrl = req.file ? req.file.path : null;
     
     let permissoes = {};
@@ -49,6 +50,7 @@ router.post('/', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, 
 
 router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
     const { isAdministrador, usuario, senha, nome, cpf, telefone, endereco, dataNascimento } = req.body;
+    res.locals.auditTarget = nome; // Para o log
 
     if (isAdministrador === 'true' || req.body.isAdministrador === true) {
         if (!req.isMaster) {
@@ -105,7 +107,7 @@ router.delete('/:id', verificarToken, checkPerm('allowDeleteMember'), async (req
     try {
         const membro = await Membro.findById(req.params.id);
         if (membro) {
-            res.locals.auditTarget = membro.nome;
+            res.locals.auditTarget = membro.nome; // Define o nome para o log ANTES de apagar
             await Membro.findByIdAndDelete(req.params.id);
             if (membro.fotoPerfilUrl && !membro.fotoPerfilUrl.includes("svg+xml")) {
                 const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
