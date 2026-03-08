@@ -12,7 +12,6 @@ const Log = require('../models/Log');
 
 const router = express.Router();
 
-// Rota para o Backup Automático
 router.get('/auto', async (req, res) => {
     const { key } = req.query;
     const CRON_SECRET = process.env.CRON_SECRET;
@@ -23,7 +22,7 @@ router.get('/auto', async (req, res) => {
 
     try {
         const membros = await Membro.find({}).lean();
-        const transacoes = await Transacao.find({}).lean(); // Captura todas as transações existentes no banco
+        const transacoes = await Transacao.find({}).lean();
         const igreja = await Igreja.findOne({}).lean();
         const config = await Config.findOne({}).lean();
 
@@ -78,7 +77,6 @@ router.get('/auto', async (req, res) => {
     }
 });
 
-// Rota para backup manual via Dashboard
 router.post('/', verificarToken, async (req, res) => {
     if (!req.isMaster) {
         return res.status(403).json({ error: "Apenas o administrador mestre pode realizar backups." });
@@ -86,7 +84,7 @@ router.post('/', verificarToken, async (req, res) => {
 
     try {
         const membros = await Membro.find({}).lean();
-        const transacoes = await Transacao.find({}).lean(); // Captura todas as transações existentes no banco sem filtros
+        const transacoes = await Transacao.find({}).lean();
         const igreja = await Igreja.findOne({}).lean();
         const config = await Config.findOne({}).lean();
 
@@ -139,6 +137,56 @@ router.post('/', verificarToken, async (req, res) => {
     } catch (error) {
         console.error("Erro no backup:", error);
         res.status(500).json({ error: "Erro interno ao enviar backup para o Google Drive." });
+    }
+});
+
+// Listar backups disponíveis no Google Drive
+router.get('/list', verificarToken, async (req, res) => {
+    if (!req.isMaster) return res.status(403).json({ error: "Acesso negado." });
+    try {
+        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+        const response = await drive.files.list({
+            q: `'${folderId}' in parents and mimeType='application/json' and trashed=false`,
+            fields: 'files(id, name, createdTime, size)',
+            orderBy: 'createdTime desc'
+        });
+        res.json(response.data.files);
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao listar arquivos do Drive." });
+    }
+});
+
+// Restaurar um ponto de backup
+router.post('/restore/:fileId', verificarToken, async (req, res) => {
+    if (!req.isMaster) return res.status(403).json({ error: "Apenas o mestre pode restaurar o sistema." });
+    try {
+        const { fileId } = req.params;
+        const response = await drive.files.get({ fileId, alt: 'media' });
+        const backupData = response.data;
+
+        await Promise.all([
+            Membro.deleteMany({}),
+            Transacao.deleteMany({}),
+            Igreja.deleteMany({}),
+            Config.deleteMany({})
+        ]);
+
+        if (backupData.membros?.length) await Membro.insertMany(backupData.membros);
+        if (backupData.transacoes?.length) await Transacao.insertMany(backupData.transacoes);
+        if (backupData.igreja) await new Igreja(backupData.igreja).save();
+        if (backupData.config) await new Config(backupData.config).save();
+
+        await new Log({
+            usuarioId: req.userId,
+            acao: 'RESTAURAÇÃO',
+            metodo: 'POST',
+            recurso: `/api/backup/restore/${fileId}`,
+            detalhes: { fileId, status: 'Sucesso' }
+        }).save();
+
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: "Falha na restauração dos dados." });
     }
 });
 
