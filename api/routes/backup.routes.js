@@ -8,11 +8,11 @@ const Membro = require('../models/Membro');
 const Transacao = require('../models/Transacao');
 const Igreja = require('../models/Igreja');
 const Config = require('../models/Config');
-const Log = require('../models/Log'); // Importação do modelo de Log
+const Log = require('../models/Log');
 
 const router = express.Router();
 
-// Rota para o Backup Automático (cron-job.org)
+// Rota para o Backup Automático
 router.get('/auto', async (req, res) => {
     const { key } = req.query;
     const CRON_SECRET = process.env.CRON_SECRET;
@@ -23,7 +23,7 @@ router.get('/auto', async (req, res) => {
 
     try {
         const membros = await Membro.find({}).lean();
-        const transacoes = await Transacao.find({}).lean();
+        const transacoes = await Transacao.find({}).lean(); // Captura todas as transações existentes no banco
         const igreja = await Igreja.findOne({}).lean();
         const config = await Config.findOne({}).lean();
 
@@ -58,7 +58,6 @@ router.get('/auto', async (req, res) => {
             fields: 'id, webViewLink'
         });
 
-        // Registo de Auditoria para Backup Automático
         await new Log({
             usuarioId: 'sistema/cron',
             acao: 'BACKUP',
@@ -87,7 +86,7 @@ router.post('/', verificarToken, async (req, res) => {
 
     try {
         const membros = await Membro.find({}).lean();
-        const transacoes = await Transacao.find({}).lean();
+        const transacoes = await Transacao.find({}).lean(); // Captura todas as transações existentes no banco sem filtros
         const igreja = await Igreja.findOne({}).lean();
         const config = await Config.findOne({}).lean();
 
@@ -122,7 +121,6 @@ router.post('/', verificarToken, async (req, res) => {
             fields: 'id, webViewLink'
         });
 
-        // Registo de Auditoria para Backup Manual
         await new Log({
             usuarioId: req.userId,
             acao: 'BACKUP',
