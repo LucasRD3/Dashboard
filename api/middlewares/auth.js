@@ -1,5 +1,3 @@
-// Dashboard/api/middlewares/auth.js
-
 const jwt = require('jsonwebtoken');
 const Log = require('../models/Log');
 
@@ -14,6 +12,7 @@ const verificarToken = (req, res, next) => {
     jwt.verify(token, SECRET_KEY, (err, decoded) => {
         if (err) return res.status(401).json({ error: "Sessão expirada" });
         req.userId = decoded.id;
+        req.userNome = decoded.nome || decoded.id;
         req.isMaster = (decoded.id === MASTER_USER);
         req.permissoes = decoded.permissoes || {};
         next();
@@ -23,39 +22,57 @@ const verificarToken = (req, res, next) => {
 const checkPerm = (permName) => {
     return (req, res, next) => {
         if (req.isMaster) return next();
-        if (req.permissoes && req.permissoes[permName] === true) {
-            return next(); 
-        }
+        if (req.permissoes && req.permissoes[permName] === true) return next(); 
         res.status(403).json({ error: "Você não tem permissão para realizar esta ação." });
     };
 };
 
 const registrarAuditoria = async (req, res, next) => {
-    const { method, originalUrl, body, params } = req;
+    const { method, originalUrl, body, params, headers } = req;
+    const ip = headers['x-forwarded-for'] || req.socket.remoteAddress;
 
     res.on('finish', async () => {
-        if (['POST', 'PUT', 'DELETE'].includes(method) && res.statusCode >= 200 && res.statusCode < 300) {
-            try {
-                let acaoDesc = 'ATUALIZAÇÃO';
-                if (method === 'POST') acaoDesc = 'CADASTRO';
-                if (method === 'DELETE') acaoDesc = 'EXCLUSÃO';
+        const ignoreUrls = ['/api/ping', '/api/logs', '/api/config'];
+        if (ignoreUrls.some(url => originalUrl.includes(url))) return;
 
-                const detalhes = ['POST', 'PUT'].includes(method) ? { ...body } : { targetId: params.id || originalUrl.split('/').pop() };
+        if (['POST', 'PUT', 'DELETE'].includes(method) && res.statusCode >= 200 && res.statusCode < 400) {
+            try {
+                let acaoDesc = method === 'POST' ? 'CADASTRO' : (method === 'DELETE' ? 'EXCLUSÃO' : 'ATUALIZAÇÃO');
+                let target = res.locals.auditTarget || body.nome || body.descricao || params.id || 'recurso';
+                let resumo = `${req.userNome || 'Sistema'} realizou ${acaoDesc} em ${target}`;
+
+                if (originalUrl.includes('/membros')) {
+                    if (method === 'POST') resumo = `${req.userNome} cadastrou o membro: ${body.nome}`;
+                    if (method === 'DELETE') resumo = `${req.userNome} excluiu o membro: ${res.locals.auditTarget || target}`;
+                    if (method === 'PUT') resumo = `${req.userNome} atualizou dados de: ${body.nome || target}`;
+                } else if (originalUrl.includes('/transacoes')) {
+                    if (method === 'POST') resumo = `${req.userNome} registrou ${body.tipo}: ${body.descricao}`;
+                    if (method === 'DELETE') resumo = `${req.userNome} removeu transação: ${target}`;
+                    if (method === 'PUT') resumo = `${req.userNome} editou transação: ${body.descricao || target}`;
+                } else if (originalUrl.includes('/login')) {
+                    acaoDesc = 'AUTENTICAÇÃO';
+                    resumo = `Login realizado por: ${req.userNome}`;
+                }
+
+                const detalhes = { 
+                    ...(method !== 'DELETE' ? { ...body } : { id: params.id }),
+                    resumo: resumo 
+                };
                 
-                if (detalhes.senha) delete detalhes.senha;
-                if (detalhes.fotoPerfil) delete detalhes.fotoPerfil;
-                if (detalhes.comprovante) delete detalhes.comprovante;
-                if (detalhes.permissoes) delete detalhes.permissoes;
+                const sensitiveFields = ['senha', 'fotoPerfil', 'comprovante', 'permissoes'];
+                sensitiveFields.forEach(f => delete detalhes[f]);
 
                 await new Log({
-                    usuarioId: req.userId || 'sistema/desconhecido',
+                    usuarioId: req.userNome || 'sistema/anonimo',
                     acao: acaoDesc,
                     metodo: method,
                     recurso: originalUrl,
-                    detalhes: detalhes
+                    detalhes: detalhes,
+                    ip: ip,
+                    userAgent: headers['user-agent']
                 }).save();
             } catch (err) {
-                console.error("Erro ao registrar trilha de auditoria:", err.message);
+                console.error("Erro Auditoria:", err.message);
             }
         }
     });

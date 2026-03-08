@@ -1,4 +1,3 @@
-// Dashboard/api/routes/membros.routes.js
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const Membro = require('../models/Membro');
@@ -103,12 +102,20 @@ router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req
 });
 
 router.delete('/:id', verificarToken, checkPerm('allowDeleteMember'), async (req, res) => {
-    const membro = await Membro.findByIdAndDelete(req.params.id);
-    if (membro?.fotoPerfilUrl && !membro.fotoPerfilUrl.includes("svg+xml")) {
-        const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
-        await cloudinary.uploader.destroy(publicId).catch(console.error);
+    try {
+        const membro = await Membro.findById(req.params.id);
+        if (membro) {
+            res.locals.auditTarget = membro.nome;
+            await Membro.findByIdAndDelete(req.params.id);
+            if (membro.fotoPerfilUrl && !membro.fotoPerfilUrl.includes("svg+xml")) {
+                const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
+                await cloudinary.uploader.destroy(publicId).catch(console.error);
+            }
+        }
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: "Erro ao deletar membro" });
     }
-    res.json({ success: true });
 });
 
 router.get('/historico/:nome', verificarToken, async (req, res) => {

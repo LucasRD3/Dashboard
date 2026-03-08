@@ -1,4 +1,3 @@
-// Dashboard/api/models/Log.js
 const mongoose = require('mongoose');
 
 const LogSchema = new mongoose.Schema({
@@ -7,6 +6,8 @@ const LogSchema = new mongoose.Schema({
     metodo: { type: String, required: true },
     recurso: { type: String, required: true },
     detalhes: { type: Object },
+    ip: { type: String },
+    userAgent: { type: String },
     timestamp: { type: Date, default: Date.now, index: true }
 }, { versionKey: false });
 
