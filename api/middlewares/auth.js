@@ -1,8 +1,8 @@
 // Dashboard/api/middlewares/auth.js
+
 const jwt = require('jsonwebtoken');
 const Log = require('../models/Log');
 
-// Fallbacks de segurança
 const SECRET_KEY = process.env.SECRET_KEY || 'iadev_secret_default';
 const MASTER_USER = process.env.MASTER_USER || 'admin';
 
@@ -33,20 +33,23 @@ const checkPerm = (permName) => {
 const registrarAuditoria = async (req, res, next) => {
     const { method, originalUrl, body, params } = req;
 
-    // Intercepta a finalização da resposta para gravar o log apenas em caso de sucesso
     res.on('finish', async () => {
-        if (['PUT', 'DELETE'].includes(method) && res.statusCode >= 200 && res.statusCode < 300) {
+        if (['POST', 'PUT', 'DELETE'].includes(method) && res.statusCode >= 200 && res.statusCode < 300) {
             try {
-                const detalhes = method === 'PUT' ? { ...body } : { targetId: params.id || originalUrl.split('/').pop() };
+                let acaoDesc = 'ATUALIZAÇÃO';
+                if (method === 'POST') acaoDesc = 'CADASTRO';
+                if (method === 'DELETE') acaoDesc = 'EXCLUSÃO';
+
+                const detalhes = ['POST', 'PUT'].includes(method) ? { ...body } : { targetId: params.id || originalUrl.split('/').pop() };
                 
-                // Sanitização de dados sensíveis no log
                 if (detalhes.senha) delete detalhes.senha;
                 if (detalhes.fotoPerfil) delete detalhes.fotoPerfil;
                 if (detalhes.comprovante) delete detalhes.comprovante;
+                if (detalhes.permissoes) delete detalhes.permissoes;
 
                 await new Log({
                     usuarioId: req.userId || 'sistema/desconhecido',
-                    acao: method === 'PUT' ? 'ATUALIZAÇÃO' : 'EXCLUSÃO',
+                    acao: acaoDesc,
                     metodo: method,
                     recurso: originalUrl,
                     detalhes: detalhes
