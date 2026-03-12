@@ -1,3 +1,4 @@
+// Dashboard/api/models/Log.js
 const mongoose = require('mongoose');
 
 const LogSchema = new mongoose.Schema({
@@ -5,6 +6,11 @@ const LogSchema = new mongoose.Schema({
     acao: { type: String, required: true },
     metodo: { type: String, required: true },
     recurso: { type: String, required: true },
+    statusCode: { type: Number },
+    responseTime: { type: Number }, // Tempo em milissegundos
+    nivel: { type: String, enum: ['INFO', 'WARN', 'ERROR', 'SECURITY'], default: 'INFO' },
+    tipoEntidade: { type: String }, // Ex: 'Membro', 'Transacao'
+    entidadeId: { type: String },
     detalhes: { type: Object },
     ip: { type: String },
     userAgent: { type: String },

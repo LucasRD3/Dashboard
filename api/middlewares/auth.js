@@ -1,3 +1,4 @@
+// Dashboard/api/middlewares/auth.js
 const jwt = require('jsonwebtoken');
 const Log = require('../models/Log');
 
@@ -20,30 +21,43 @@ const verificarToken = (req, res, next) => {
 };
 
 const checkPerm = (permName) => {
-    return (req, res, next) => {
+    return async (req, res, next) => {
         if (req.isMaster) return next();
         if (req.permissoes && req.permissoes[permName] === true) return next(); 
+        
+        // Log de tentativa de acesso negado
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        await new Log({
+            usuarioId: req.userNome || 'anonimo',
+            acao: 'ACESSO_NEGADO',
+            metodo: req.method,
+            recurso: req.originalUrl,
+            nivel: 'SECURITY',
+            detalhes: { permissaoRequerida: permName, resumo: `Tentativa de acesso sem a permissão: ${permName}` },
+            ip: ip,
+            userAgent: req.headers['user-agent']
+        }).save();
+
         res.status(403).json({ error: "Você não tem permissão para realizar esta ação." });
     };
 };
 
 const registrarAuditoria = async (req, res, next) => {
-    // Capturamos apenas os metadados fixos no início
+    const startTime = Date.now();
     const { method, originalUrl, params, headers } = req;
     const ip = headers['x-forwarded-for'] || req.socket.remoteAddress;
 
     res.on('finish', async () => {
-        // Ignorar rotas de leitura e o próprio login (que já tem log interno)
+        const duration = Date.now() - startTime;
         const ignoreUrls = ['/api/ping', '/api/logs', '/api/config', '/api/login'];
         if (ignoreUrls.some(url => originalUrl.includes(url))) return;
 
-        if (['POST', 'PUT', 'DELETE'].includes(method) && res.statusCode >= 200 && res.statusCode < 400) {
+        // Logamos apenas operações de escrita ou erros importantes
+        if (['POST', 'PUT', 'DELETE'].includes(method) || res.statusCode >= 400) {
             try {
-                // Acessamos req.body AQUI, após o processamento das rotas/multer
                 const body = req.body || {};
                 let acaoDesc = method === 'POST' ? 'CADASTRO' : (method === 'DELETE' ? 'EXCLUSÃO' : 'ATUALIZAÇÃO');
                 
-                // Prioridade para auditTarget definido na rota, depois campos comuns do body
                 let target = res.locals.auditTarget || body.nome || body.descricao || params.id || 'recurso';
                 let resumo = `${req.userNome || 'Sistema'} realizou ${acaoDesc} em ${target}`;
 
@@ -51,9 +65,6 @@ const registrarAuditoria = async (req, res, next) => {
                     if (method === 'POST') resumo = `${req.userNome} cadastrou o membro: ${body.nome || target}`;
                     if (method === 'DELETE') resumo = `${req.userNome} excluiu o membro: ${res.locals.auditTarget || target}`;
                     if (method === 'PUT') resumo = `${req.userNome} alterou dados de: ${body.nome || target}`;
-                } else if (originalUrl.includes('/transacoes')) {
-                    if (method === 'POST') resumo = `${req.userNome} registrou ${body.tipo || 'transação'}: ${body.descricao || target}`;
-                    if (method === 'DELETE') resumo = `${req.userNome} removeu a transação: ${res.locals.auditTarget || target}`;
                 }
 
                 const detalhes = { 
@@ -61,7 +72,6 @@ const registrarAuditoria = async (req, res, next) => {
                     resumo: resumo 
                 };
                 
-                // Limpeza de campos sensíveis/pesados
                 const sensitive = ['senha', 'fotoPerfil', 'comprovante', 'permissoes'];
                 sensitive.forEach(f => delete detalhes[f]);
 
@@ -70,6 +80,11 @@ const registrarAuditoria = async (req, res, next) => {
                     acao: acaoDesc,
                     metodo: method,
                     recurso: originalUrl,
+                    statusCode: res.statusCode,
+                    responseTime: duration,
+                    nivel: res.statusCode >= 400 ? 'WARN' : 'INFO',
+                    tipoEntidade: res.locals.tipoEntidade,
+                    entidadeId: res.locals.entidadeId || params.id,
                     detalhes: detalhes,
                     ip: ip,
                     userAgent: headers['user-agent']

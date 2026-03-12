@@ -1,3 +1,4 @@
+// Dashboard/api/routes/membros.routes.js
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const Membro = require('../models/Membro');
@@ -21,7 +22,9 @@ router.post('/', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, 
     }
 
     const { nome, cpf, telefone, endereco, dataNascimento, isAdministrador, usuario, senha } = req.body;
-    res.locals.auditTarget = nome; // Para o log
+    res.locals.auditTarget = nome; 
+    res.locals.tipoEntidade = 'Membro';
+
     const fotoPerfilUrl = req.file ? req.file.path : null;
     
     let permissoes = {};
@@ -42,6 +45,8 @@ router.post('/', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, 
             senha: hashedSenha,
             permissoes: isAdministrador === 'true' ? permissoes : {}
         }).save();
+        
+        res.locals.entidadeId = novo._id;
         res.status(201).json(novo);
     } catch (err) {
         res.status(400).json({ error: "Erro ao salvar membro. Verifique se o nome já existe." });
@@ -49,8 +54,10 @@ router.post('/', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, 
 });
 
 router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
-    const { isAdministrador, usuario, senha, nome, cpf, telefone, endereco, dataNascimento } = req.body;
-    res.locals.auditTarget = nome; // Para o log
+    const { isAdministrador, usuario, senha, nome } = req.body;
+    res.locals.auditTarget = nome;
+    res.locals.tipoEntidade = 'Membro';
+    res.locals.entidadeId = req.params.id;
 
     if (isAdministrador === 'true' || req.body.isAdministrador === true) {
         if (!req.isMaster) {
@@ -79,7 +86,8 @@ router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req
         }
 
         let updateData = { 
-            nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl,
+            ...req.body,
+            fotoPerfilUrl,
             isAdministrador: isAdministrador === 'true'
         };
 
@@ -98,16 +106,17 @@ router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req
         const atualizado = await Membro.findByIdAndUpdate(req.params.id, updateData, { new: true });
         res.json(atualizado);
     } catch (err) {
-        console.error(err);
         res.status(500).json({ error: "Erro ao atualizar membro" });
     }
 });
 
 router.delete('/:id', verificarToken, checkPerm('allowDeleteMember'), async (req, res) => {
+    res.locals.tipoEntidade = 'Membro';
+    res.locals.entidadeId = req.params.id;
     try {
         const membro = await Membro.findById(req.params.id);
         if (membro) {
-            res.locals.auditTarget = membro.nome; // Define o nome para o log ANTES de apagar
+            res.locals.auditTarget = membro.nome;
             await Membro.findByIdAndDelete(req.params.id);
             if (membro.fotoPerfilUrl && !membro.fotoPerfilUrl.includes("svg+xml")) {
                 const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
