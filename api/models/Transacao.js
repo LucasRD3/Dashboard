@@ -9,4 +9,7 @@ const TransacaoSchema = new mongoose.Schema({
     comprovanteUrl: String
 });
 
+// Índice composto para otimização de consultas de saldo e relatórios mensais
+TransacaoSchema.index({ data: 1, tipo: 1 });
+
 module.exports = mongoose.models.Transacao || mongoose.model('Transacao', TransacaoSchema);

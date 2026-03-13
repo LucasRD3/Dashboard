@@ -9,7 +9,7 @@ const MembroSchema = new mongoose.Schema({
     dataNascimento: { type: String },
     fotoPerfilUrl: { type: String },
     isAdministrador: { type: Boolean, default: false, index: true },
-    usuario: { type: String },
+    usuario: { type: String, index: true },
     senha: { type: String },
     permissoes: { type: Object, default: {} } 
 });

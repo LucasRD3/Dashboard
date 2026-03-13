@@ -9,7 +9,11 @@ const { cloudinary, uploadPerfil } = require('../config/cloudinary');
 const router = express.Router();
 
 router.get('/', verificarToken, async (req, res) => {
-    res.json(await Membro.find({}).sort({ nome: 1 }).lean());
+    // Melhoria: Usando projeção para não trazer campos sensíveis ou pesados na listagem geral
+    res.json(await Membro.find({})
+        .select('nome cpf telefone endereco dataNascimento fotoPerfilUrl isAdministrador usuario')
+        .sort({ nome: 1 })
+        .lean());
 });
 
 router.post('/', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {

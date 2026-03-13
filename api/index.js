@@ -20,18 +20,11 @@ const departamentosRoutes = require('./routes/departamentos.routes');
 
 const app = express();
 
+// Inicia a conexão com o banco de dados no carregamento do módulo
+connectDB();
+
 app.use(cors());
 app.use(bodyParser.json());
-
-// Garante conexão ao banco antes de processar rotas
-app.use(async (req, res, next) => {
-    try {
-        await connectDB();
-        next();
-    } catch (err) {
-        res.status(500).json({ error: "Erro de conexão com o banco de dados" });
-    }
-});
 
 // Middleware de Auditoria para registrar operações de alteração e exclusão
 app.use(registrarAuditoria);
