@@ -43,6 +43,8 @@ router.get('/saldo-anterior', verificarToken, async (req, res) => {
         const { ano, mes } = req.query;
         if (!ano || !mes) return res.json({ saldoAnterior: 0 });
         const start = new Date(Date.UTC(parseInt(ano), parseInt(mes), 1, 0, 0, 0));
+        
+        // Otimização: Agregação utiliza índices se o modelo estiver configurado com { data: 1, tipo: 1 }
         const resultado = await Transacao.aggregate([
             { $match: { data: { $lt: start } } },
             {
@@ -69,7 +71,7 @@ router.get('/saldo-anterior', verificarToken, async (req, res) => {
 
 router.post('/', verificarToken, upload.single('comprovante'), async (req, res) => {
     try {
-        res.locals.auditTarget = req.body.descricao; // Para o log
+        res.locals.auditTarget = req.body.descricao;
         const nova = await new Transacao({
             descricao: req.body.descricao,
             valor: parseFloat(req.body.valor) || 0,
@@ -85,7 +87,7 @@ router.post('/', verificarToken, upload.single('comprovante'), async (req, res) 
 
 router.put('/:id', verificarToken, checkPerm('allowEditTransaction'), async (req, res) => {
     try {
-        res.locals.auditTarget = req.body.descricao; // Para o log
+        res.locals.auditTarget = req.body.descricao;
         const atualizada = await Transacao.findByIdAndUpdate(
             req.params.id,
             {
@@ -106,7 +108,7 @@ router.delete('/:id', verificarToken, checkPerm('allowDeleteTransaction'), async
     try {
         const transacao = await Transacao.findById(req.params.id);
         if (transacao) {
-            res.locals.auditTarget = transacao.descricao; // Para o log
+            res.locals.auditTarget = transacao.descricao;
             await Transacao.findByIdAndDelete(req.params.id);
             if (transacao.comprovanteUrl) {
                 const publicId = `comprovantes/${transacao.comprovanteUrl.split('/').pop().split('.')[0]}`;

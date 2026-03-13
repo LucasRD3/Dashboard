@@ -1,4 +1,3 @@
-// Dashboard/api/middlewares/auth.js
 const jwt = require('jsonwebtoken');
 const Log = require('../models/Log');
 
@@ -25,7 +24,6 @@ const checkPerm = (permName) => {
         if (req.isMaster) return next();
         if (req.permissoes && req.permissoes[permName] === true) return next(); 
         
-        // Log de tentativa de acesso negado
         const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         await new Log({
             usuarioId: req.userNome || 'anonimo',
@@ -52,7 +50,6 @@ const registrarAuditoria = async (req, res, next) => {
         const ignoreUrls = ['/api/ping', '/api/logs', '/api/config', '/api/login'];
         if (ignoreUrls.some(url => originalUrl.includes(url))) return;
 
-        // Logamos apenas operações de escrita ou erros importantes
         if (['POST', 'PUT', 'DELETE'].includes(method) || res.statusCode >= 400) {
             try {
                 const body = req.body || {};

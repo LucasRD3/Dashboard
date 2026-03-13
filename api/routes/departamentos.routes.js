@@ -1,4 +1,3 @@
-// Dashboard/api/routes/departamentos.routes.js
 const express = require('express');
 const Departamento = require('../models/Departamento');
 const Membro = require('../models/Membro');
@@ -8,7 +7,10 @@ const router = express.Router();
 
 router.get('/', verificarToken, async (req, res) => {
     try {
-        const departamentos = await Departamento.find().populate('membros', 'nome fotoPerfilUrl').lean();
+        // Otimização: Uso de lean e projeção no populate para carregar apenas o essencial
+        const departamentos = await Departamento.find()
+            .populate('membros', 'nome fotoPerfilUrl')
+            .lean();
         res.json(departamentos);
     } catch (err) {
         res.status(500).json({ error: "Erro ao buscar departamentos" });

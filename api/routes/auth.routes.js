@@ -31,6 +31,7 @@ router.post('/login', async (req, res) => {
     }
     
     try {
+        // Otimização: Busca case-insensitive com índice e lean
         const admin = await Membro.findOne({ 
             usuario: { $regex: new RegExp(`^${usuario}$`, 'i') }, 
             isAdministrador: true 
