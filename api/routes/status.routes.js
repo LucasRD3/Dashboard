@@ -11,25 +11,23 @@ router.get('/check', verificarToken, async (req, res) => {
     };
 
     try {
-        // Executa as verificações em paralelo para que a latência de uma não atrase a outra
-        const [mongoRes, driveRes] = await Promise.allSettled([
-            // Verificação síncrona do estado do Mongoose encapsulada numa Promise
-            Promise.resolve(mongoose.connection.readyState === 1),
-            // Chamada de rede ao Google Drive
-            drive.about.get({ fields: 'user' })
-        ]);
-
-        // Define o estado do MongoDB baseado no resultado da primeira Promise
-        status.mongodb = mongoRes.status === 'fulfilled' ? mongoRes.value : false;
-
-        // Define o estado do Google Drive baseado no resultado da segunda Promise
-        status.googleDrive = driveRes.status === 'fulfilled' && !!driveRes.value.data.user;
-
+        // Verifica se o estado é 1 (Connected)
+        status.mongodb = mongoose.connection.readyState === 1;
     } catch (err) {
-        console.error("Erro ao verificar status global:", err.message);
+        console.error("Erro status mongo:", err.message);
+        status.mongodb = false;
     }
 
-    // Retorna sempre 200 com o objeto de status para manter a compatibilidade com o front-end
+    try {
+        // Valida se o cliente do drive e o token de refresh estão ativos
+        const response = await drive.about.get({ fields: 'user' });
+        status.googleDrive = !!response.data.user;
+    } catch (err) {
+        console.error("Erro status drive:", err.message);
+        status.googleDrive = false;
+    }
+
+    // Retorna sempre 200 com o objeto de status para evitar que o fetch do front caia no catch
     res.status(200).json(status);
 });
 
