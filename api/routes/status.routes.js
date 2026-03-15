@@ -8,17 +8,54 @@ const { cloudinary } = require('../config/cloudinary');
 const { verificarToken } = require('../middlewares/auth');
 const pkg = require('../../package.json');
 
-// Cache simples em memória para o check padrão
+// Cache em memória para o status geral (MongoDB, Drive, Cloudinary)
 let lastStatus = null;
 let lastCheck = 0;
 const CACHE_DURATION = 10000; // 10 segundos
 
+// Cache específico para geolocalização (IP e Localização mudam raramente)
+let cachedLocation = null;
+let lastLocationCheck = 0;
+const LOCATION_CACHE_DURATION = 3600000; // 1 hora
+
+/**
+ * Busca a localização do servidor com cache persistente
+ */
+async function getServerLocation() {
+    const now = Date.now();
+    if (cachedLocation && (now - lastLocationCheck < LOCATION_CACHE_DURATION)) {
+        return cachedLocation;
+    }
+
+    try {
+        const geoRes = await fetch('http://ip-api.com/json/');
+        const geoData = await geoRes.json();
+        if (geoData.status === 'success') {
+            cachedLocation = {
+                ip: geoData.query,
+                city: geoData.city,
+                country: geoData.country
+            };
+            lastLocationCheck = now;
+            return cachedLocation;
+        }
+    } catch (err) {
+        console.error("Erro ao buscar geolocalização do servidor:", err.message);
+    }
+    
+    // Retorna o último cache conhecido ou valores vazios em caso de falha crítica
+    return cachedLocation || { ip: '--', city: '--', country: '--' };
+}
+
 router.get('/check', verificarToken, async (req, res) => {
     const now = Date.now();
 
+    // Se houver cache recente do status completo, retorna imediatamente
     if (lastStatus && (now - lastCheck < CACHE_DURATION)) {
         return res.status(200).json(lastStatus);
     }
+
+    const location = await getServerLocation();
 
     const status = {
         api: {
@@ -28,28 +65,14 @@ router.get('/check', verificarToken, async (req, res) => {
             memory: process.memoryUsage().rss,
             platform: os.platform(),
             cpuLoad: os.loadavg()[0],
-            location: { ip: '--', city: '--', country: '--' }
+            location: location
         },
         mongodb: { connected: false, latency: 0, dbName: '' },
         googleDrive: { connected: false, latency: 0, storage: null },
         cloudinary: { connected: false, latency: 0 }
     };
 
-    // Busca Geolocalização do Servidor (ip-api.com)
-    try {
-        const geoRes = await fetch('http://ip-api.com/json/');
-        const geoData = await geoRes.json();
-        if (geoData.status === 'success') {
-            status.api.location = {
-                ip: geoData.query,
-                city: geoData.city,
-                country: geoData.country
-            };
-        }
-    } catch (err) {
-        console.error("Erro ao buscar geolocalização do servidor:", err.message);
-    }
-
+    // Verificação MongoDB
     try {
         const start = Date.now();
         if (mongoose.connection.readyState === 1) {
@@ -62,6 +85,7 @@ router.get('/check', verificarToken, async (req, res) => {
         console.error("Erro status mongo:", err.message);
     }
 
+    // Verificação Google Drive
     try {
         const start = Date.now();
         const response = await drive.about.get({ 
@@ -79,6 +103,7 @@ router.get('/check', verificarToken, async (req, res) => {
         console.error("Erro status drive:", err.message);
     }
 
+    // Verificação Cloudinary
     try {
         const start = Date.now();
         const result = await cloudinary.api.ping();
@@ -93,7 +118,6 @@ router.get('/check', verificarToken, async (req, res) => {
     res.status(200).json(status);
 });
 
-// NOVA ROTA: Diagnóstico Avançado (Auto-Check)
 router.get('/diagnose', verificarToken, async (req, res) => {
     const results = {
         database: { status: 'pending', message: '' },
@@ -102,7 +126,6 @@ router.get('/diagnose', verificarToken, async (req, res) => {
     };
 
     try {
-        // 1. Teste de Escrita/Delete no MongoDB
         const startMongo = Date.now();
         const diagCollection = mongoose.connection.db.collection('_diagnostics_test');
         const testDoc = { test: true, timestamp: new Date() };
@@ -117,7 +140,6 @@ router.get('/diagnose', verificarToken, async (req, res) => {
         results.database.message = `Falha na escrita: ${err.message}`;
     }
 
-    // 2. Verificação de Variáveis de Ambiente Críticas
     const criticalVars = [
         'MONGO_URI', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 
         'GOOGLE_REFRESH_TOKEN', 'CLOUDINARY_CLOUD_NAME', 'JWT_SECRET'
@@ -130,7 +152,6 @@ router.get('/diagnose', verificarToken, async (req, res) => {
     const missing = results.environment.vars.filter(v => !v.defined);
     results.environment.status = missing.length === 0 ? 'success' : 'warning';
 
-    // 3. Teste de Uso do Cloudinary (API de Administração)
     try {
         const usage = await cloudinary.api.usage();
         results.storage.status = 'success';
