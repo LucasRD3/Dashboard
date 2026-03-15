@@ -1,3 +1,4 @@
+// Dashboard/api/routes/transacoes.routes.js
 const express = require('express');
 const Transacao = require('../models/Transacao');
 const { verificarToken, checkPerm } = require('../middlewares/auth');
@@ -44,7 +45,6 @@ router.get('/saldo-anterior', verificarToken, async (req, res) => {
         if (!ano || !mes) return res.json({ saldoAnterior: 0 });
         const start = new Date(Date.UTC(parseInt(ano), parseInt(mes), 1, 0, 0, 0));
         
-        // Otimização: Agregação utiliza índices se o modelo estiver configurado com { data: 1, tipo: 1 }
         const resultado = await Transacao.aggregate([
             { $match: { data: { $lt: start } } },
             {

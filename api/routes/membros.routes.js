@@ -11,8 +11,9 @@ const router = express.Router();
 const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 router.get('/', verificarToken, async (req, res) => {
+    // CORREÇÃO: Adicionado 'permissoes' ao select para que o frontend receba os dados ao abrir o modal
     res.json(await Membro.find({})
-        .select('nome cpf telefone endereco dataNascimento fotoPerfilUrl isAdministrador usuario')
+        .select('nome cpf telefone endereco dataNascimento fotoPerfilUrl isAdministrador usuario permissoes')
         .sort({ nome: 1 })
         .lean());
 });
@@ -80,7 +81,6 @@ router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req
         if (req.file) {
             if (fotoPerfilUrl && fotoPerfilUrl.includes("http") && !fotoPerfilUrl.includes("svg+xml")) {
                 const publicId = `perfil_membros/${fotoPerfilUrl.split('/').pop().split('.')[0]}`;
-                // Removido await: Limpa o Cloudinary em background
                 cloudinary.uploader.destroy(publicId).catch(console.error);
             }
             fotoPerfilUrl = req.file.path;
@@ -121,7 +121,6 @@ router.delete('/:id', verificarToken, checkPerm('allowDeleteMember'), async (req
             res.locals.auditTarget = membro.nome;
             if (membro.fotoPerfilUrl && membro.fotoPerfilUrl.includes("http") && !membro.fotoPerfilUrl.includes("svg+xml")) {
                 const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
-                // Removido await: Exclui imagem do Cloudinary sem travar a resposta da API
                 cloudinary.uploader.destroy(publicId).catch(console.error);
             }
             await Membro.findByIdAndDelete(req.params.id);
