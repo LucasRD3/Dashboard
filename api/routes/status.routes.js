@@ -11,21 +11,24 @@ router.get('/check', verificarToken, async (req, res) => {
     };
 
     try {
-        // Verifica o estado da conexão do Mongoose (1 = conectado)
+        // Verifica se o estado é 1 (Connected)
         status.mongodb = mongoose.connection.readyState === 1;
     } catch (err) {
+        console.error("Erro status mongo:", err.message);
         status.mongodb = false;
     }
 
     try {
-        // Tenta uma chamada simples à API do Drive para validar credenciais e rede
-        await drive.about.get({ fields: 'user' });
-        status.googleDrive = true;
+        // Valida se o cliente do drive e o token de refresh estão ativos
+        const response = await drive.about.get({ fields: 'user' });
+        status.googleDrive = !!response.data.user;
     } catch (err) {
+        console.error("Erro status drive:", err.message);
         status.googleDrive = false;
     }
 
-    res.json(status);
+    // Retorna sempre 200 com o objeto de status para evitar que o fetch do front caia no catch
+    res.status(200).json(status);
 });
 
 module.exports = router;
