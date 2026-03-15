@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
+const os = require('os');
 const drive = require('../config/googleDrive');
 const { cloudinary } = require('../config/cloudinary');
 const { verificarToken } = require('../middlewares/auth');
@@ -24,7 +25,9 @@ router.get('/check', verificarToken, async (req, res) => {
             version: pkg.version,
             uptime: process.uptime(),
             env: process.env.NODE_ENV || 'production',
-            memory: process.memoryUsage().rss
+            memory: process.memoryUsage().rss,
+            platform: os.platform(),
+            cpuLoad: os.loadavg()[0]
         },
         mongodb: { connected: false, latency: 0, dbName: '' },
         googleDrive: { connected: false, latency: 0, storage: null },
