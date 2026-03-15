@@ -13,13 +13,13 @@ let lastStatus = null;
 let lastCheck = 0;
 const CACHE_DURATION = 10000; // 10 segundos
 
-// Cache específico para geolocalização (IP e Localização mudam raramente)
+// Cache específico para geolocalização (IP do servidor)
 let cachedLocation = null;
 let lastLocationCheck = 0;
 const LOCATION_CACHE_DURATION = 3600000; // 1 hora
 
 /**
- * Busca a localização do servidor com cache persistente
+ * Busca a localização do servidor com cache de 1 hora
  */
 async function getServerLocation() {
     const now = Date.now();
@@ -42,19 +42,19 @@ async function getServerLocation() {
     } catch (err) {
         console.error("Erro ao buscar geolocalização do servidor:", err.message);
     }
-    
-    // Retorna o último cache conhecido ou valores vazios em caso de falha crítica
     return cachedLocation || { ip: '--', city: '--', country: '--' };
 }
 
 router.get('/check', verificarToken, async (req, res) => {
     const now = Date.now();
+    const forceRefresh = req.query.force === 'true';
 
-    // Se houver cache recente do status completo, retorna imediatamente
-    if (lastStatus && (now - lastCheck < CACHE_DURATION)) {
+    // Retorna cache se não for um pedido forçado e estiver dentro dos 10s
+    if (!forceRefresh && lastStatus && (now - lastCheck < CACHE_DURATION)) {
         return res.status(200).json(lastStatus);
     }
 
+    // Localização sempre usa cache de 1h
     const location = await getServerLocation();
 
     const status = {
@@ -72,7 +72,6 @@ router.get('/check', verificarToken, async (req, res) => {
         cloudinary: { connected: false, latency: 0 }
     };
 
-    // Verificação MongoDB
     try {
         const start = Date.now();
         if (mongoose.connection.readyState === 1) {
@@ -85,7 +84,6 @@ router.get('/check', verificarToken, async (req, res) => {
         console.error("Erro status mongo:", err.message);
     }
 
-    // Verificação Google Drive
     try {
         const start = Date.now();
         const response = await drive.about.get({ 
@@ -103,7 +101,6 @@ router.get('/check', verificarToken, async (req, res) => {
         console.error("Erro status drive:", err.message);
     }
 
-    // Verificação Cloudinary
     try {
         const start = Date.now();
         const result = await cloudinary.api.ping();
@@ -129,10 +126,8 @@ router.get('/diagnose', verificarToken, async (req, res) => {
         const startMongo = Date.now();
         const diagCollection = mongoose.connection.db.collection('_diagnostics_test');
         const testDoc = { test: true, timestamp: new Date() };
-        
         await diagCollection.insertOne(testDoc);
         await diagCollection.deleteOne({ _id: testDoc._id });
-        
         results.database.status = 'success';
         results.database.message = `Escrita e leitura OK (${Date.now() - startMongo}ms)`;
     } catch (err) {
@@ -140,15 +135,8 @@ router.get('/diagnose', verificarToken, async (req, res) => {
         results.database.message = `Falha na escrita: ${err.message}`;
     }
 
-    const criticalVars = [
-        'MONGO_URI', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 
-        'GOOGLE_REFRESH_TOKEN', 'CLOUDINARY_CLOUD_NAME', 'JWT_SECRET'
-    ];
-    
-    results.environment.vars = criticalVars.map(v => ({
-        name: v,
-        defined: !!process.env[v]
-    }));
+    const criticalVars = ['MONGO_URI', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN', 'CLOUDINARY_CLOUD_NAME', 'JWT_SECRET'];
+    results.environment.vars = criticalVars.map(v => ({ name: v, defined: !!process.env[v] }));
     const missing = results.environment.vars.filter(v => !v.defined);
     results.environment.status = missing.length === 0 ? 'success' : 'warning';
 
