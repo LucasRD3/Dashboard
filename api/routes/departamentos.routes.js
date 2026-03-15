@@ -1,13 +1,13 @@
+// Dashboard/api/routes/departamentos.routes.js
 const express = require('express');
 const Departamento = require('../models/Departamento');
 const Membro = require('../models/Membro');
-const { verificarToken } = require('../middlewares/auth');
+const { verificarToken, checkPerm } = require('../middlewares/auth');
 
 const router = express.Router();
 
 router.get('/', verificarToken, async (req, res) => {
     try {
-        // Otimização: Uso de lean e projeção no populate para carregar apenas o essencial
         const departamentos = await Departamento.find()
             .populate('membros', 'nome fotoPerfilUrl')
             .lean();
@@ -17,7 +17,7 @@ router.get('/', verificarToken, async (req, res) => {
     }
 });
 
-router.post('/', verificarToken, async (req, res) => {
+router.post('/', verificarToken, checkPerm('allowManageDepts'), async (req, res) => {
     try {
         res.locals.auditTarget = req.body.nome;
         const novo = await new Departamento(req.body).save();
@@ -27,7 +27,7 @@ router.post('/', verificarToken, async (req, res) => {
     }
 });
 
-router.put('/:id', verificarToken, async (req, res) => {
+router.put('/:id', verificarToken, checkPerm('allowManageDepts'), async (req, res) => {
     try {
         res.locals.auditTarget = req.body.nome;
         const atualizado = await Departamento.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -37,7 +37,7 @@ router.put('/:id', verificarToken, async (req, res) => {
     }
 });
 
-router.delete('/:id', verificarToken, async (req, res) => {
+router.delete('/:id', verificarToken, checkPerm('allowManageDepts'), async (req, res) => {
     try {
         const depto = await Departamento.findById(req.params.id);
         if (depto) {
@@ -50,7 +50,7 @@ router.delete('/:id', verificarToken, async (req, res) => {
     }
 });
 
-router.post('/:id/membros', verificarToken, async (req, res) => {
+router.post('/:id/membros', verificarToken, checkPerm('allowManageDepts'), async (req, res) => {
     try {
         const { membroId } = req.body;
         const depto = await Departamento.findById(req.params.id);
@@ -65,7 +65,7 @@ router.post('/:id/membros', verificarToken, async (req, res) => {
     }
 });
 
-router.delete('/:id/membros/:membroId', verificarToken, async (req, res) => {
+router.delete('/:id/membros/:membroId', verificarToken, checkPerm('allowManageDepts'), async (req, res) => {
     try {
         const depto = await Departamento.findById(req.params.id);
         depto.membros = depto.membros.filter(m => m.toString() !== req.params.membroId);

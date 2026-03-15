@@ -7,11 +7,11 @@ const { verificarToken, checkPerm } = require('../middlewares/auth');
 const { cloudinary, uploadPerfil } = require('../config/cloudinary');
 
 const router = express.Router();
+const MASTER_USER = process.env.MASTER_USER || 'admin';
 
 const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 router.get('/', verificarToken, async (req, res) => {
-    // CORREÇÃO: Adicionado 'permissoes' ao select para que o frontend receba os dados ao abrir o modal
     res.json(await Membro.find({})
         .select('nome cpf telefone endereco dataNascimento fotoPerfilUrl isAdministrador usuario permissoes')
         .sort({ nome: 1 })
@@ -64,6 +64,10 @@ router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req
         const membroAtual = await Membro.findById(req.params.id);
         if (!membroAtual) return res.status(404).json({ error: "Membro não encontrado" });
 
+        if (membroAtual.usuario === MASTER_USER && !req.isMaster) {
+            return res.status(403).json({ error: "Apenas o Administrador Mestre pode editar este perfil." });
+        }
+
         const isAdmRequested = req.body.isAdministrador === 'true';
         const { usuario, senha, nome, cpf, telefone, endereco, dataNascimento } = req.body;
 
@@ -75,6 +79,14 @@ router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req
             if (!req.isMaster && (!req.permissoes || !req.permissoes.allowManageAdmins)) {
                 return res.status(403).json({ error: "Permissão negada para gerenciar Administradores." });
             }
+        }
+
+        if (membroAtual._id.toString() === req.userId && req.body.permissoes && !req.isMaster) {
+             const novasPerms = JSON.parse(req.body.permissoes);
+             const antigasPerms = membroAtual.permissoes || {};
+             if (JSON.stringify(novasPerms) !== JSON.stringify(antigasPerms)) {
+                 return res.status(403).json({ error: "Você não pode alterar suas próprias permissões." });
+             }
         }
 
         let fotoPerfilUrl = membroAtual.fotoPerfilUrl;
@@ -117,14 +129,18 @@ router.delete('/:id', verificarToken, checkPerm('allowDeleteMember'), async (req
     res.locals.entidadeId = req.params.id;
     try {
         const membro = await Membro.findById(req.params.id);
-        if (membro) {
-            res.locals.auditTarget = membro.nome;
-            if (membro.fotoPerfilUrl && membro.fotoPerfilUrl.includes("http") && !membro.fotoPerfilUrl.includes("svg+xml")) {
-                const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
-                cloudinary.uploader.destroy(publicId).catch(console.error);
-            }
-            await Membro.findByIdAndDelete(req.params.id);
+        if (!membro) return res.status(404).json({ error: "Membro não encontrado" });
+
+        if (membro.usuario === MASTER_USER) {
+            return res.status(403).json({ error: "O Administrador Mestre não pode ser excluído." });
         }
+
+        res.locals.auditTarget = membro.nome;
+        if (membro.fotoPerfilUrl && membro.fotoPerfilUrl.includes("http") && !membro.fotoPerfilUrl.includes("svg+xml")) {
+            const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
+            cloudinary.uploader.destroy(publicId).catch(console.error);
+        }
+        await Membro.findByIdAndDelete(req.params.id);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: "Erro ao deletar membro" });
