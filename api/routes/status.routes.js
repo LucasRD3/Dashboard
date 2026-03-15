@@ -20,8 +20,8 @@ router.get('/check', verificarToken, async (req, res) => {
 
     const status = {
         mongodb: { connected: false, latency: 0 },
-        googleDrive: { connected: false, latency: 0 },
-        cloudinary: { connected: false, latency: 0 }
+        googleDrive: { connected: false, latency: 0, quota: null },
+        cloudinary: { connected: false, latency: 0, usage: null }
     };
 
     // Verificação MongoDB
@@ -36,25 +36,35 @@ router.get('/check', verificarToken, async (req, res) => {
         console.error("Erro status mongo:", err.message);
     }
 
-    // Verificação Google Drive (Otimizado com Keep-Alive)
+    // Verificação Google Drive (Otimizado com Quota)
     try {
         const start = Date.now();
         const response = await drive.about.get({ 
-            fields: 'user',
-            // Timeout curto para evitar que a API segure a requisição por muito tempo
-            timeout: 3000 
+            fields: 'user, storageQuota',
+            timeout: 5000 
         });
         status.googleDrive.connected = !!response.data.user;
+        status.googleDrive.quota = response.data.storageQuota;
         status.googleDrive.latency = Date.now() - start;
     } catch (err) {
         console.error("Erro status drive:", err.message);
     }
 
-    // Verificação Cloudinary
+    // Verificação Cloudinary (Otimizado com Uso)
     try {
         const start = Date.now();
         const result = await cloudinary.api.ping();
         status.cloudinary.connected = result.status === 'ok';
+        
+        if (status.cloudinary.connected) {
+            const usage = await cloudinary.api.usage();
+            status.cloudinary.usage = {
+                transformations: usage.transformations,
+                bandwidth: usage.bandwidth,
+                storage: usage.storage,
+                plan: usage.plan
+            };
+        }
         status.cloudinary.latency = Date.now() - start;
     } catch (err) {
         console.error("Erro status cloudinary:", err.message);
