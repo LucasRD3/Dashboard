@@ -1,3 +1,4 @@
+// Dashboard/api/routes/status.routes.js
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
@@ -7,7 +8,7 @@ const { cloudinary } = require('../config/cloudinary');
 const { verificarToken } = require('../middlewares/auth');
 const pkg = require('../../package.json');
 
-// Cache simples em memória
+// Cache simples em memória para o check padrão
 let lastStatus = null;
 let lastCheck = 0;
 const CACHE_DURATION = 10000; // 10 segundos
@@ -15,7 +16,6 @@ const CACHE_DURATION = 10000; // 10 segundos
 router.get('/check', verificarToken, async (req, res) => {
     const now = Date.now();
 
-    // Retorna cache se a última verificação foi há menos de 10 segundos
     if (lastStatus && (now - lastCheck < CACHE_DURATION)) {
         return res.status(200).json(lastStatus);
     }
@@ -34,7 +34,6 @@ router.get('/check', verificarToken, async (req, res) => {
         cloudinary: { connected: false, latency: 0 }
     };
 
-    // Verificação MongoDB
     try {
         const start = Date.now();
         if (mongoose.connection.readyState === 1) {
@@ -47,7 +46,6 @@ router.get('/check', verificarToken, async (req, res) => {
         console.error("Erro status mongo:", err.message);
     }
 
-    // Verificação Google Drive (Com detalhes de armazenamento)
     try {
         const start = Date.now();
         const response = await drive.about.get({ 
@@ -65,7 +63,6 @@ router.get('/check', verificarToken, async (req, res) => {
         console.error("Erro status drive:", err.message);
     }
 
-    // Verificação Cloudinary
     try {
         const start = Date.now();
         const result = await cloudinary.api.ping();
@@ -77,8 +74,57 @@ router.get('/check', verificarToken, async (req, res) => {
 
     lastStatus = status;
     lastCheck = now;
-
     res.status(200).json(status);
+});
+
+// NOVA ROTA: Diagnóstico Avançado (Auto-Check)
+router.get('/diagnose', verificarToken, async (req, res) => {
+    const results = {
+        database: { status: 'pending', message: '' },
+        environment: { status: 'pending', vars: [] },
+        storage: { status: 'pending', message: '' }
+    };
+
+    try {
+        // 1. Teste de Escrita/Delete no MongoDB
+        const startMongo = Date.now();
+        const diagCollection = mongoose.connection.db.collection('_diagnostics_test');
+        const testDoc = { test: true, timestamp: new Date() };
+        
+        await diagCollection.insertOne(testDoc);
+        await diagCollection.deleteOne({ _id: testDoc._id });
+        
+        results.database.status = 'success';
+        results.database.message = `Escrita e leitura OK (${Date.now() - startMongo}ms)`;
+    } catch (err) {
+        results.database.status = 'error';
+        results.database.message = `Falha na escrita: ${err.message}`;
+    }
+
+    // 2. Verificação de Variáveis de Ambiente Críticas
+    const criticalVars = [
+        'MONGO_URI', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 
+        'GOOGLE_REFRESH_TOKEN', 'CLOUDINARY_CLOUD_NAME', 'JWT_SECRET'
+    ];
+    
+    results.environment.vars = criticalVars.map(v => ({
+        name: v,
+        defined: !!process.env[v]
+    }));
+    const missing = results.environment.vars.filter(v => !v.defined);
+    results.environment.status = missing.length === 0 ? 'success' : 'warning';
+
+    // 3. Teste de Uso do Cloudinary (API de Administração)
+    try {
+        const usage = await cloudinary.api.usage();
+        results.storage.status = 'success';
+        results.storage.message = `Transformações: ${usage.transformations.used}/${usage.transformations.limit}`;
+    } catch (err) {
+        results.storage.status = 'error';
+        results.storage.message = "Falha ao consultar limites da API";
+    }
+
+    res.status(200).json(results);
 });
 
 module.exports = router;
