@@ -7,38 +7,47 @@ const { verificarToken } = require('../middlewares/auth');
 
 router.get('/check', verificarToken, async (req, res) => {
     const status = {
-        mongodb: false,
-        googleDrive: false,
-        cloudinary: false
+        mongodb: { connected: false, latency: 0 },
+        googleDrive: { connected: false, latency: 0 },
+        cloudinary: { connected: false, latency: 0 }
     };
 
+    // Verificação MongoDB com ping real
     try {
-        // Verifica se o estado é 1 (Connected)
-        status.mongodb = mongoose.connection.readyState === 1;
+        const start = Date.now();
+        if (mongoose.connection.readyState === 1) {
+            await mongoose.connection.db.admin().ping();
+            status.mongodb.connected = true;
+        }
+        status.mongodb.latency = Date.now() - start;
     } catch (err) {
         console.error("Erro status mongo:", err.message);
-        status.mongodb = false;
+        status.mongodb.connected = false;
     }
 
+    // Verificação Google Drive
     try {
-        // Valida se o cliente do drive e o token de refresh estão ativos
+        const start = Date.now();
         const response = await drive.about.get({ fields: 'user' });
-        status.googleDrive = !!response.data.user;
+        status.googleDrive.connected = !!response.data.user;
+        status.googleDrive.latency = Date.now() - start;
     } catch (err) {
         console.error("Erro status drive:", err.message);
-        status.googleDrive = false;
+        status.googleDrive.connected = false;
     }
 
+    // Verificação Cloudinary
     try {
-        // Valida a conexão e credenciais com a Cloudinary
+        const start = Date.now();
         const result = await cloudinary.api.ping();
-        status.cloudinary = result.status === 'ok';
+        status.cloudinary.connected = result.status === 'ok';
+        status.cloudinary.latency = Date.now() - start;
     } catch (err) {
         console.error("Erro status cloudinary:", err.message);
-        status.cloudinary = false;
+        status.cloudinary.connected = false;
     }
 
-    // Retorna sempre 200 com o objeto de status para evitar que o fetch do front caia no catch
+    // Retorna 200 com os dados individuais
     res.status(200).json(status);
 });
 
