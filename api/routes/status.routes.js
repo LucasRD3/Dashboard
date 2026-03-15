@@ -27,12 +27,28 @@ router.get('/check', verificarToken, async (req, res) => {
             env: process.env.NODE_ENV || 'production',
             memory: process.memoryUsage().rss,
             platform: os.platform(),
-            cpuLoad: os.loadavg()[0]
+            cpuLoad: os.loadavg()[0],
+            location: { ip: '--', city: '--', country: '--' }
         },
         mongodb: { connected: false, latency: 0, dbName: '' },
         googleDrive: { connected: false, latency: 0, storage: null },
         cloudinary: { connected: false, latency: 0 }
     };
+
+    // Busca Geolocalização do Servidor (ip-api.com)
+    try {
+        const geoRes = await fetch('http://ip-api.com/json/');
+        const geoData = await geoRes.json();
+        if (geoData.status === 'success') {
+            status.api.location = {
+                ip: geoData.query,
+                city: geoData.city,
+                country: geoData.country
+            };
+        }
+    } catch (err) {
+        console.error("Erro ao buscar geolocalização do servidor:", err.message);
+    }
 
     try {
         const start = Date.now();
