@@ -2,12 +2,14 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const drive = require('../config/googleDrive');
+const { cloudinary } = require('../config/cloudinary');
 const { verificarToken } = require('../middlewares/auth');
 
 router.get('/check', verificarToken, async (req, res) => {
     const status = {
         mongodb: false,
-        googleDrive: false
+        googleDrive: false,
+        cloudinary: false
     };
 
     try {
@@ -25,6 +27,15 @@ router.get('/check', verificarToken, async (req, res) => {
     } catch (err) {
         console.error("Erro status drive:", err.message);
         status.googleDrive = false;
+    }
+
+    try {
+        // Valida a conexão e credenciais com a Cloudinary
+        const result = await cloudinary.api.ping();
+        status.cloudinary = result.status === 'ok';
+    } catch (err) {
+        console.error("Erro status cloudinary:", err.message);
+        status.cloudinary = false;
     }
 
     // Retorna sempre 200 com o objeto de status para evitar que o fetch do front caia no catch
