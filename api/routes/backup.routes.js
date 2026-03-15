@@ -21,10 +21,13 @@ router.get('/auto', async (req, res) => {
     }
 
     try {
-        const membros = await Membro.find({}).lean();
-        const transacoes = await Transacao.find({}).lean();
-        const igreja = await Igreja.findOne({}).lean();
-        const config = await Config.findOne({}).lean();
+        // Busca paralela para acelerar o processo
+        const [membros, transacoes, igreja, config] = await Promise.all([
+            Membro.find({}).lean(),
+            Transacao.find({}).lean(),
+            Igreja.findOne({}).lean(),
+            Config.findOne({}).lean()
+        ]);
 
         const backupData = {
             dataBackup: new Date().toISOString(),
@@ -82,75 +85,72 @@ router.post('/', verificarToken, async (req, res) => {
         return res.status(403).json({ error: "Apenas o administrador mestre pode realizar backups." });
     }
 
-    try {
-        const membros = await Membro.find({}).lean();
-        const transacoes = await Transacao.find({}).lean();
-        const igreja = await Igreja.findOne({}).lean();
-        const config = await Config.findOne({}).lean();
+    // Resposta imediata para evitar timeout e lentidão para o usuário
+    res.json({ 
+        success: true, 
+        message: "Backup manual iniciado em segundo plano. O arquivo será enviado ao Google Drive em instantes."
+    });
 
-        const backupData = {
-            dataBackup: new Date().toISOString(),
-            membros,
-            transacoes,
-            igreja: igreja || {},
-            config: config || {}
-        };
+    // Processamento em Background
+    (async () => {
+        try {
+            const [membros, transacoes, igreja, config] = await Promise.all([
+                Membro.find({}).lean(),
+                Transacao.find({}).lean(),
+                Igreja.findOne({}).lean(),
+                Config.findOne({}).lean()
+            ]);
 
-        const jsonString = JSON.stringify(backupData, null, 2);
-        const bufferStream = new stream.PassThrough();
-        bufferStream.end(Buffer.from(jsonString));
+            const backupData = {
+                dataBackup: new Date().toISOString(),
+                membros,
+                transacoes,
+                igreja: igreja || {},
+                config: config || {}
+            };
 
-        const fileName = `backup_iadev_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+            const jsonString = JSON.stringify(backupData, null, 2);
+            const bufferStream = new stream.PassThrough();
+            bufferStream.end(Buffer.from(jsonString));
 
-        const fileMetadata = {
-            name: fileName,
-            parents: folderId ? [folderId] : []
-        };
+            const fileName = `backup_iadev_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+            const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
-        const media = {
-            mimeType: 'application/json',
-            body: bufferStream
-        };
+            const fileMetadata = { name: fileName, parents: folderId ? [folderId] : [] };
+            const media = { mimeType: 'application/json', body: bufferStream };
 
-        const uploadedFile = await drive.files.create({
-            resource: fileMetadata,
-            media: media,
-            fields: 'id, webViewLink'
-        });
+            const uploadedFile = await drive.files.create({
+                resource: fileMetadata,
+                media: media,
+                fields: 'id, webViewLink'
+            });
 
-        await new Log({
-            usuarioId: req.userId,
-            acao: 'BACKUP',
-            metodo: 'POST',
-            recurso: '/api/backup',
-            detalhes: { tipo: 'Manual', fileId: uploadedFile.data.id, link: uploadedFile.data.webViewLink }
-        }).save();
+            await new Log({
+                usuarioId: req.userId,
+                acao: 'BACKUP',
+                metodo: 'POST',
+                recurso: '/api/backup',
+                detalhes: { tipo: 'Manual', fileId: uploadedFile.data.id, link: uploadedFile.data.webViewLink, status: 'Concluído' }
+            }).save();
 
-        res.json({ 
-            success: true, 
-            message: "Backup realizado com sucesso no Google Drive",
-            fileId: uploadedFile.data.id,
-            link: uploadedFile.data.webViewLink
-        });
-
-    } catch (error) {
-        console.error("Erro no backup:", error);
-        res.status(500).json({ error: "Erro interno ao enviar backup para o Google Drive." });
-    }
+        } catch (error) {
+            console.error("Erro no backup assíncrono:", error);
+        }
+    })();
 });
 
-// Listar backups disponíveis no Google Drive e checar cota
 router.get('/list', verificarToken, async (req, res) => {
     if (!req.isMaster) return res.status(403).json({ error: "Acesso negado." });
     try {
         const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-        const response = await drive.files.list({
-            q: `'${folderId}' in parents and mimeType='application/json' and trashed=false`,
-            fields: 'files(id, name, createdTime, size)',
-            orderBy: 'createdTime desc'
-        });
-        const about = await drive.about.get({ fields: 'storageQuota' });
+        const [response, about] = await Promise.all([
+            drive.files.list({
+                q: `'${folderId}' in parents and mimeType='application/json' and trashed=false`,
+                fields: 'files(id, name, createdTime, size)',
+                orderBy: 'createdTime desc'
+            }),
+            drive.about.get({ fields: 'storageQuota' })
+        ]);
         
         res.json({ 
             files: response.data.files,
@@ -161,7 +161,6 @@ router.get('/list', verificarToken, async (req, res) => {
     }
 });
 
-// Restaurar um ponto de backup
 router.post('/restore/:fileId', verificarToken, async (req, res) => {
     if (!req.isMaster) return res.status(403).json({ error: "Apenas o mestre pode restaurar o sistema." });
     try {

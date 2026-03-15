@@ -8,7 +8,6 @@ const { cloudinary, uploadPerfil } = require('../config/cloudinary');
 
 const router = express.Router();
 
-// Função auxiliar para escapar caracteres de Regex
 const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 router.get('/', verificarToken, async (req, res) => {
@@ -67,7 +66,6 @@ router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req
         const isAdmRequested = req.body.isAdministrador === 'true';
         const { usuario, senha, nome, cpf, telefone, endereco, dataNascimento } = req.body;
 
-        // Auditoria e Permissões
         res.locals.auditTarget = nome || membroAtual.nome;
         res.locals.tipoEntidade = 'Membro';
         res.locals.entidadeId = req.params.id;
@@ -80,10 +78,10 @@ router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req
 
         let fotoPerfilUrl = membroAtual.fotoPerfilUrl;
         if (req.file) {
-            // Verificação de segurança para evitar erro ao dar split em URL nula
             if (fotoPerfilUrl && fotoPerfilUrl.includes("http") && !fotoPerfilUrl.includes("svg+xml")) {
                 const publicId = `perfil_membros/${fotoPerfilUrl.split('/').pop().split('.')[0]}`;
-                await cloudinary.uploader.destroy(publicId).catch(console.error);
+                // Removido await: Limpa o Cloudinary em background
+                cloudinary.uploader.destroy(publicId).catch(console.error);
             }
             fotoPerfilUrl = req.file.path;
         }
@@ -121,10 +119,10 @@ router.delete('/:id', verificarToken, checkPerm('allowDeleteMember'), async (req
         const membro = await Membro.findById(req.params.id);
         if (membro) {
             res.locals.auditTarget = membro.nome;
-            // Proteção contra split em URL nula
             if (membro.fotoPerfilUrl && membro.fotoPerfilUrl.includes("http") && !membro.fotoPerfilUrl.includes("svg+xml")) {
                 const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
-                await cloudinary.uploader.destroy(publicId).catch(console.error);
+                // Removido await: Exclui imagem do Cloudinary sem travar a resposta da API
+                cloudinary.uploader.destroy(publicId).catch(console.error);
             }
             await Membro.findByIdAndDelete(req.params.id);
         }
@@ -136,7 +134,6 @@ router.delete('/:id', verificarToken, checkPerm('allowDeleteMember'), async (req
 
 router.get('/historico/:nome', verificarToken, async (req, res) => {
     try {
-        // Uso de escape para evitar Regex Injection
         const nomeSeguro = escapeRegExp(req.params.nome);
         const historico = await Transacao.find({ 
             descricao: { $regex: nomeSeguro, $options: 'i' } 

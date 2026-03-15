@@ -1,3 +1,4 @@
+// Dashboard/api/middlewares/auth.js
 const jwt = require('jsonwebtoken');
 const Log = require('../models/Log');
 
@@ -45,51 +46,54 @@ const registrarAuditoria = async (req, res, next) => {
     const { method, originalUrl, params, headers } = req;
     const ip = headers['x-forwarded-for'] || req.socket.remoteAddress;
 
-    res.on('finish', async () => {
-        const duration = Date.now() - startTime;
-        const ignoreUrls = ['/api/ping', '/api/logs', '/api/config', '/api/login'];
-        if (ignoreUrls.some(url => originalUrl.includes(url))) return;
+    res.on('finish', () => {
+        // setImmediate garante que o log seja processado logo após a resposta ser enviada ao cliente
+        setImmediate(async () => {
+            const duration = Date.now() - startTime;
+            const ignoreUrls = ['/api/ping', '/api/logs', '/api/config', '/api/login'];
+            if (ignoreUrls.some(url => originalUrl.includes(url))) return;
 
-        if (['POST', 'PUT', 'DELETE'].includes(method) || res.statusCode >= 400) {
-            try {
-                const body = req.body || {};
-                let acaoDesc = method === 'POST' ? 'CADASTRO' : (method === 'DELETE' ? 'EXCLUSÃO' : 'ATUALIZAÇÃO');
-                
-                let target = res.locals.auditTarget || body.nome || body.descricao || params.id || 'recurso';
-                let resumo = `${req.userNome || 'Sistema'} realizou ${acaoDesc} em ${target}`;
+            if (['POST', 'PUT', 'DELETE'].includes(method) || res.statusCode >= 400) {
+                try {
+                    const body = req.body || {};
+                    let acaoDesc = method === 'POST' ? 'CADASTRO' : (method === 'DELETE' ? 'EXCLUSÃO' : 'ATUALIZAÇÃO');
+                    
+                    let target = res.locals.auditTarget || body.nome || body.descricao || params.id || 'recurso';
+                    let resumo = `${req.userNome || 'Sistema'} realizou ${acaoDesc} em ${target}`;
 
-                if (originalUrl.includes('/membros')) {
-                    if (method === 'POST') resumo = `${req.userNome} cadastrou o membro: ${body.nome || target}`;
-                    if (method === 'DELETE') resumo = `${req.userNome} excluiu o membro: ${res.locals.auditTarget || target}`;
-                    if (method === 'PUT') resumo = `${req.userNome} alterou dados de: ${body.nome || target}`;
+                    if (originalUrl.includes('/membros')) {
+                        if (method === 'POST') resumo = `${req.userNome} cadastrou o membro: ${body.nome || target}`;
+                        if (method === 'DELETE') resumo = `${req.userNome} excluiu o membro: ${res.locals.auditTarget || target}`;
+                        if (method === 'PUT') resumo = `${req.userNome} alterou dados de: ${body.nome || target}`;
+                    }
+
+                    const detalhes = { 
+                        ...(method !== 'DELETE' ? { ...body } : { id: params.id }),
+                        resumo: resumo 
+                    };
+                    
+                    const sensitive = ['senha', 'fotoPerfil', 'comprovante', 'permissoes'];
+                    sensitive.forEach(f => delete detalhes[f]);
+
+                    await new Log({
+                        usuarioId: req.userNome || 'sistema/anonimo',
+                        acao: acaoDesc,
+                        metodo: method,
+                        recurso: originalUrl,
+                        statusCode: res.statusCode,
+                        responseTime: duration,
+                        nivel: res.statusCode >= 400 ? 'WARN' : 'INFO',
+                        tipoEntidade: res.locals.tipoEntidade,
+                        entidadeId: res.locals.entidadeId || params.id,
+                        detalhes: detalhes,
+                        ip: ip,
+                        userAgent: headers['user-agent']
+                    }).save();
+                } catch (err) {
+                    console.error("Erro Auditoria Assíncrona:", err.message);
                 }
-
-                const detalhes = { 
-                    ...(method !== 'DELETE' ? { ...body } : { id: params.id }),
-                    resumo: resumo 
-                };
-                
-                const sensitive = ['senha', 'fotoPerfil', 'comprovante', 'permissoes'];
-                sensitive.forEach(f => delete detalhes[f]);
-
-                await new Log({
-                    usuarioId: req.userNome || 'sistema/anonimo',
-                    acao: acaoDesc,
-                    metodo: method,
-                    recurso: originalUrl,
-                    statusCode: res.statusCode,
-                    responseTime: duration,
-                    nivel: res.statusCode >= 400 ? 'WARN' : 'INFO',
-                    tipoEntidade: res.locals.tipoEntidade,
-                    entidadeId: res.locals.entidadeId || params.id,
-                    detalhes: detalhes,
-                    ip: ip,
-                    userAgent: headers['user-agent']
-                }).save();
-            } catch (err) {
-                console.error("Erro Auditoria:", err.message);
             }
-        }
+        });
     });
     next();
 };
