@@ -8,8 +8,10 @@ const { cloudinary, uploadPerfil } = require('../config/cloudinary');
 
 const router = express.Router();
 
+// Função auxiliar para escapar caracteres de Regex
+const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 router.get('/', verificarToken, async (req, res) => {
-    // Melhoria: Usando projeção para não trazer campos sensíveis ou pesados na listagem geral
     res.json(await Membro.find({})
         .select('nome cpf telefone endereco dataNascimento fotoPerfilUrl isAdministrador usuario')
         .sort({ nome: 1 })
@@ -17,15 +19,15 @@ router.get('/', verificarToken, async (req, res) => {
 });
 
 router.post('/', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
-    if (req.body.isAdministrador === 'true') {
-        if (!req.isMaster) {
-            if (!req.permissoes || !req.permissoes.allowManageAdmins) {
-                return res.status(403).json({ error: "Você não tem permissão para criar Administradores." });
-            }
+    const isAdm = req.body.isAdministrador === 'true';
+
+    if (isAdm) {
+        if (!req.isMaster && (!req.permissoes || !req.permissoes.allowManageAdmins)) {
+            return res.status(403).json({ error: "Você não tem permissão para criar Administradores." });
         }
     }
 
-    const { nome, cpf, telefone, endereco, dataNascimento, isAdministrador, usuario, senha } = req.body;
+    const { nome, cpf, telefone, endereco, dataNascimento, usuario, senha } = req.body;
     res.locals.auditTarget = nome; 
     res.locals.tipoEntidade = 'Membro';
 
@@ -38,67 +40,65 @@ router.post('/', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, 
 
     try {
         let hashedSenha = null;
-        if (isAdministrador === 'true' && senha) {
+        if (isAdm && senha) {
             hashedSenha = await bcrypt.hash(senha.trim(), 10);
         }
 
         const novo = await new Membro({ 
             nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl,
-            isAdministrador: isAdministrador === 'true',
-            usuario: isAdministrador === 'true' ? usuario.trim() : null,
+            isAdministrador: isAdm,
+            usuario: isAdm ? (usuario ? usuario.trim() : null) : null,
             senha: hashedSenha,
-            permissoes: isAdministrador === 'true' ? permissoes : {}
+            permissoes: isAdm ? permissoes : {}
         }).save();
         
         res.locals.entidadeId = novo._id;
         res.status(201).json(novo);
     } catch (err) {
-        res.status(400).json({ error: "Erro ao salvar membro. Verifique se o nome já existe." });
+        res.status(400).json({ error: "Erro ao salvar: Nome ou Usuário já existe." });
     }
 });
 
 router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req, res) => {
-    const { isAdministrador, usuario, senha, nome } = req.body;
-    res.locals.auditTarget = nome;
-    res.locals.tipoEntidade = 'Membro';
-    res.locals.entidadeId = req.params.id;
-
-    if (isAdministrador === 'true' || req.body.isAdministrador === true) {
-        if (!req.isMaster) {
-            if (!req.permissoes || !req.permissoes.allowManageAdmins) {
-                return res.status(403).json({ error: "Permissão negada para gerenciar Administradores." });
-            }
-        }
-    }
-
-    let permissoes = {};
-    if (req.body.permissoes) {
-        try { permissoes = JSON.parse(req.body.permissoes); } catch(e) {}
-    }
-
     try {
         const membroAtual = await Membro.findById(req.params.id);
         if (!membroAtual) return res.status(404).json({ error: "Membro não encontrado" });
 
+        const isAdmRequested = req.body.isAdministrador === 'true';
+        const { usuario, senha, nome, cpf, telefone, endereco, dataNascimento } = req.body;
+
+        // Auditoria e Permissões
+        res.locals.auditTarget = nome || membroAtual.nome;
+        res.locals.tipoEntidade = 'Membro';
+        res.locals.entidadeId = req.params.id;
+
+        if (isAdmRequested || membroAtual.isAdministrador) {
+            if (!req.isMaster && (!req.permissoes || !req.permissoes.allowManageAdmins)) {
+                return res.status(403).json({ error: "Permissão negada para gerenciar Administradores." });
+            }
+        }
+
         let fotoPerfilUrl = membroAtual.fotoPerfilUrl;
         if (req.file) {
-            if (membroAtual.fotoPerfilUrl && !membroAtual.fotoPerfilUrl.includes("svg+xml")) {
-                const publicId = `perfil_membros/${membroAtual.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
+            // Verificação de segurança para evitar erro ao dar split em URL nula
+            if (fotoPerfilUrl && fotoPerfilUrl.includes("http") && !fotoPerfilUrl.includes("svg+xml")) {
+                const publicId = `perfil_membros/${fotoPerfilUrl.split('/').pop().split('.')[0]}`;
                 await cloudinary.uploader.destroy(publicId).catch(console.error);
             }
             fotoPerfilUrl = req.file.path;
         }
 
         let updateData = { 
-            ...req.body,
-            fotoPerfilUrl,
-            isAdministrador: isAdministrador === 'true'
+            nome, cpf, telefone, endereco, dataNascimento, fotoPerfilUrl,
+            isAdministrador: isAdmRequested
         };
 
-        if (updateData.isAdministrador) {
-            updateData.usuario = usuario ? usuario.trim() : usuario;
-            updateData.permissoes = permissoes; 
-            if (senha) { 
+        if (isAdmRequested) {
+            updateData.usuario = usuario ? usuario.trim() : membroAtual.usuario;
+            if (req.body.permissoes) {
+                try { updateData.permissoes = JSON.parse(req.body.permissoes); } catch(e) {}
+            }
+            if (senha && senha.trim() !== "") { 
                 updateData.senha = await bcrypt.hash(senha.trim(), 10);
             }
         } else {
@@ -107,7 +107,7 @@ router.put('/:id', verificarToken, uploadPerfil.single('fotoPerfil'), async (req
             updateData.permissoes = {};
         }
 
-        const atualizado = await Membro.findByIdAndUpdate(req.params.id, updateData, { new: true });
+        const atualizado = await Membro.findByIdAndUpdate(req.params.id, { $set: updateData }, { new: true });
         res.json(atualizado);
     } catch (err) {
         res.status(500).json({ error: "Erro ao atualizar membro" });
@@ -121,11 +121,12 @@ router.delete('/:id', verificarToken, checkPerm('allowDeleteMember'), async (req
         const membro = await Membro.findById(req.params.id);
         if (membro) {
             res.locals.auditTarget = membro.nome;
-            await Membro.findByIdAndDelete(req.params.id);
-            if (membro.fotoPerfilUrl && !membro.fotoPerfilUrl.includes("svg+xml")) {
+            // Proteção contra split em URL nula
+            if (membro.fotoPerfilUrl && membro.fotoPerfilUrl.includes("http") && !membro.fotoPerfilUrl.includes("svg+xml")) {
                 const publicId = `perfil_membros/${membro.fotoPerfilUrl.split('/').pop().split('.')[0]}`;
                 await cloudinary.uploader.destroy(publicId).catch(console.error);
             }
+            await Membro.findByIdAndDelete(req.params.id);
         }
         res.json({ success: true });
     } catch (err) {
@@ -135,11 +136,13 @@ router.delete('/:id', verificarToken, checkPerm('allowDeleteMember'), async (req
 
 router.get('/historico/:nome', verificarToken, async (req, res) => {
     try {
+        // Uso de escape para evitar Regex Injection
+        const nomeSeguro = escapeRegExp(req.params.nome);
         const historico = await Transacao.find({ 
-            descricao: { $regex: req.params.nome, $options: 'i' } 
+            descricao: { $regex: nomeSeguro, $options: 'i' } 
         }).sort({ data: -1 }).limit(20).lean();
         res.json(historico);
-    } catch (err) { res.status(500).json({ error: "Erro busca" }); }
+    } catch (err) { res.status(500).json({ error: "Erro na busca de histórico" }); }
 });
 
 module.exports = router;
