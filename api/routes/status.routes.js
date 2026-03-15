@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const drive = require('../config/googleDrive');
 const { cloudinary } = require('../config/cloudinary');
 const { verificarToken } = require('../middlewares/auth');
+const pkg = require('../../package.json');
 
 // Cache simples em memória
 let lastStatus = null;
@@ -19,8 +20,14 @@ router.get('/check', verificarToken, async (req, res) => {
     }
 
     const status = {
-        mongodb: { connected: false, latency: 0 },
-        googleDrive: { connected: false, latency: 0 },
+        api: {
+            version: pkg.version,
+            uptime: process.uptime(),
+            env: process.env.NODE_ENV || 'production',
+            memory: process.memoryUsage().rss
+        },
+        mongodb: { connected: false, latency: 0, dbName: '' },
+        googleDrive: { connected: false, latency: 0, storage: null },
         cloudinary: { connected: false, latency: 0 }
     };
 
@@ -30,22 +37,27 @@ router.get('/check', verificarToken, async (req, res) => {
         if (mongoose.connection.readyState === 1) {
             await mongoose.connection.db.admin().ping();
             status.mongodb.connected = true;
+            status.mongodb.dbName = mongoose.connection.name;
         }
         status.mongodb.latency = Date.now() - start;
     } catch (err) {
         console.error("Erro status mongo:", err.message);
     }
 
-    // Verificação Google Drive (Otimizado com Keep-Alive)
+    // Verificação Google Drive (Com detalhes de armazenamento)
     try {
         const start = Date.now();
         const response = await drive.about.get({ 
-            fields: 'user',
-            // Timeout curto para evitar que a API segure a requisição por muito tempo
-            timeout: 3000 
+            fields: 'user, storageQuota',
+            timeout: 5000 
         });
         status.googleDrive.connected = !!response.data.user;
         status.googleDrive.latency = Date.now() - start;
+        status.googleDrive.storage = {
+            limit: response.data.storageQuota.limit,
+            usage: response.data.storageQuota.usage,
+            usageInDrive: response.data.storageQuota.usageInDrive
+        };
     } catch (err) {
         console.error("Erro status drive:", err.message);
     }
@@ -60,7 +72,6 @@ router.get('/check', verificarToken, async (req, res) => {
         console.error("Erro status cloudinary:", err.message);
     }
 
-    // Atualiza cache
     lastStatus = status;
     lastCheck = now;
 
