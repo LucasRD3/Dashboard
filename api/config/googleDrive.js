@@ -19,11 +19,14 @@ oauth2Client.setCredentials({
     refresh_token: process.env.GOOGLE_REFRESH_TOKEN
 });
 
-// Inicializa a API do Drive utilizando o agente customizado
+/**
+ * Inicializa a API do Drive utilizando o agente customizado.
+ * Foi removido o parâmetro "http2: true" para evitar o erro ERR_HTTP2_GOAWAY_SESSION,
+ * garantindo maior estabilidade em execuções assíncronas e ambientes serverless.
+ */
 const drive = google.drive({ 
     version: 'v3', 
     auth: oauth2Client,
-    http2: true, // Habilita suporte a HTTP/2 se disponível
     agent: agent
 });
 
