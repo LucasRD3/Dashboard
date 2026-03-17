@@ -20,64 +20,65 @@ router.get('/auto', async (req, res) => {
         return res.status(401).json({ error: "Acesso não autorizado ao backup automático." });
     }
 
-    try {
-        // Busca paralela para acelerar o processo
-        const [membros, transacoes, igreja, config] = await Promise.all([
-            Membro.find({}).lean(),
-            Transacao.find({}).lean(),
-            Igreja.findOne({}).lean(),
-            Config.findOne({}).lean()
-        ]);
+    // Resposta imediata para evitar timeout no cronjob da Vercel
+    res.json({ 
+        success: true, 
+        message: "Backup automático iniciado em segundo plano."
+    });
 
-        const backupData = {
-            dataBackup: new Date().toISOString(),
-            membros,
-            transacoes,
-            igreja: igreja || {},
-            config: config || {}
-        };
+    // Processamento em Background
+    (async () => {
+        try {
+            const [membros, transacoes, igreja, config] = await Promise.all([
+                Membro.find({}).lean(),
+                Transacao.find({}).lean(),
+                Igreja.findOne({}).lean(),
+                Config.findOne({}).lean()
+            ]);
 
-        const jsonString = JSON.stringify(backupData, null, 2);
-        const bufferStream = new stream.PassThrough();
-        bufferStream.end(Buffer.from(jsonString));
+            const backupData = {
+                dataBackup: new Date().toISOString(),
+                membros,
+                transacoes,
+                igreja: igreja || {},
+                config: config || {}
+            };
 
-        const fileName = `auto_backup_iadev_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+            const jsonString = JSON.stringify(backupData, null, 2);
+            const bufferStream = new stream.PassThrough();
+            bufferStream.end(Buffer.from(jsonString));
 
-        const fileMetadata = {
-            name: fileName,
-            parents: folderId ? [folderId] : []
-        };
+            const fileName = `auto_backup_iadev_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+            const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
-        const media = {
-            mimeType: 'application/json',
-            body: bufferStream
-        };
+            const uploadedFile = await drive.files.create({
+                resource: {
+                    name: fileName,
+                    parents: folderId ? [folderId] : []
+                },
+                media: {
+                    mimeType: 'application/json',
+                    body: bufferStream
+                },
+                fields: 'id'
+            });
 
-        const uploadedFile = await drive.files.create({
-            resource: fileMetadata,
-            media: media,
-            fields: 'id, webViewLink'
-        });
+            await new Log({
+                usuarioId: 'sistema/cron',
+                acao: 'BACKUP',
+                metodo: 'GET',
+                recurso: '/api/backup/auto',
+                detalhes: { 
+                    tipo: 'Automático', 
+                    fileId: uploadedFile.data.id,
+                    status: 'Concluído'
+                }
+            }).save();
 
-        await new Log({
-            usuarioId: 'sistema/cron',
-            acao: 'BACKUP',
-            metodo: 'GET',
-            recurso: '/api/backup/auto',
-            detalhes: { tipo: 'Automático', fileId: uploadedFile.data.id }
-        }).save();
-
-        res.json({ 
-            success: true, 
-            message: "Backup automático realizado com sucesso",
-            fileId: uploadedFile.data.id 
-        });
-
-    } catch (error) {
-        console.error("Erro no backup automático:", error);
-        res.status(500).json({ error: "Erro interno no processo de backup." });
-    }
+        } catch (error) {
+            console.error("Erro no backup automático assíncrono:", error);
+        }
+    })();
 });
 
 router.post('/', verificarToken, async (req, res) => {
@@ -85,13 +86,11 @@ router.post('/', verificarToken, async (req, res) => {
         return res.status(403).json({ error: "Apenas o administrador mestre pode realizar backups." });
     }
 
-    // Resposta imediata para evitar timeout e lentidão para o usuário
     res.json({ 
         success: true, 
         message: "Backup manual iniciado em segundo plano. O arquivo será enviado ao Google Drive em instantes."
     });
 
-    // Processamento em Background
     (async () => {
         try {
             const [membros, transacoes, igreja, config] = await Promise.all([

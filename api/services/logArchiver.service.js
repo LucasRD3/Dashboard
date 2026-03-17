@@ -4,11 +4,14 @@ const Log = require('../models/Log');
 const drive = require('../config/googleDrive');
 
 const archiveOldLogs = async () => {
-    // ALTERAÇÃO TEMPORÁRIA PARA TESTE: Pega todos os logs criados até amanhã
+    // Filtro real: logs com mais de 30 dias
     const limiteData = new Date();
-    limiteData.setDate(limiteData.getDate() + 1);
+    limiteData.setDate(limiteData.getDate() - 30);
 
-    const logsParaArquivar = await Log.find({ timestamp: { $lt: limiteData } }).lean();
+    // Limite de 500 para garantir que a operação seja rápida na Vercel
+    const logsParaArquivar = await Log.find({ timestamp: { $lt: limiteData } })
+        .limit(500)
+        .lean();
 
     if (logsParaArquivar.length === 0) {
         return { logsArquivados: 0, fileId: null };
@@ -48,7 +51,7 @@ const archiveOldLogs = async () => {
         metodo: 'GET',
         recurso: '/api/logs/archive',
         detalhes: { 
-            resumo: `SISTEMA realizou BACKUP/LIMPEZA de ${logsParaArquivar.length} logs de teste`,
+            resumo: `SISTEMA realizou arquivamento de ${logsParaArquivar.length} logs antigos (Lote Otimizado)`,
             fileId: uploadedFile.data.id
         }
     }).save();

@@ -15,16 +15,22 @@ router.get('/archive', async (req, res) => {
         return res.status(401).json({ error: "Acesso não autorizado ao arquivamento automático." });
     }
 
-    try {
-        const resultado = await archiveOldLogs();
-        res.json(resultado);
-    } catch (error) {
-        console.error("Erro no serviço de arquivamento:", error);
-        res.status(500).json({ error: "Erro interno no processo de arquivamento." });
-    }
+    // Responde imediatamente para evitar o timeout do Cronjob
+    res.json({ 
+        success: true, 
+        message: "Arquivamento de logs iniciado em segundo plano." 
+    });
+
+    // Executa o arquivamento em background
+    (async () => {
+        try {
+            await archiveOldLogs();
+        } catch (error) {
+            console.error("Erro assíncrono no arquivamento:", error);
+        }
+    })();
 });
 
-// Listar arquivos de log arquivados no Google Drive
 router.get('/archive/list', verificarToken, async (req, res) => {
     if (!req.isMaster && (!req.permissoes || req.permissoes.allowViewLogs !== true)) {
         return res.status(403).json({ error: "Acesso negado." });
@@ -43,7 +49,6 @@ router.get('/archive/list', verificarToken, async (req, res) => {
     }
 });
 
-// Baixar conteúdo de um arquivo de log específico
 router.get('/archive/:fileId', verificarToken, async (req, res) => {
     if (!req.isMaster && (!req.permissoes || req.permissoes.allowViewLogs !== true)) {
         return res.status(403).json({ error: "Acesso negado." });
