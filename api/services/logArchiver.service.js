@@ -6,7 +6,7 @@ const drive = require('../config/googleDrive');
 const archiveOldLogs = async () => {
     // Filtro: logs com mais de 30 dias
     const limiteData = new Date();
-    limiteData.setDate(limiteData.getDate() - 30);
+    limiteData.setDate(limiteData.getDate() - 0);
 
     // Busca os logs mais antigos (limite de 2000 para segurança de memória na Vercel)
     // A ordenação por timestamp garante que os logs mais antigos sejam os primeiros a ser limpos
