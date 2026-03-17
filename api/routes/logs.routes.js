@@ -15,20 +15,19 @@ router.get('/archive', async (req, res) => {
         return res.status(401).json({ error: "Acesso não autorizado ao arquivamento automático." });
     }
 
-    // Responde imediatamente para evitar o timeout do Cronjob
-    res.json({ 
-        success: true, 
-        message: "Arquivamento de logs iniciado em segundo plano." 
-    });
-
-    // Executa o arquivamento em background
-    (async () => {
-        try {
-            await archiveOldLogs();
-        } catch (error) {
-            console.error("Erro assíncrono no arquivamento:", error);
-        }
-    })();
+    try {
+        // Aguarda a conclusão total (Upload + Eliminação) antes de responder
+        const resultado = await archiveOldLogs();
+        
+        res.json({ 
+            success: true, 
+            message: "Arquivamento concluído com sucesso.",
+            detalhes: resultado 
+        });
+    } catch (error) {
+        console.error("Erro no arquivamento de logs:", error);
+        res.status(500).json({ error: "Erro ao processar arquivamento.", message: error.message });
+    }
 });
 
 router.get('/archive/list', verificarToken, async (req, res) => {
