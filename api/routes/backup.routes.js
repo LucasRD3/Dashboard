@@ -20,65 +20,64 @@ router.get('/auto', async (req, res) => {
         return res.status(401).json({ error: "Acesso não autorizado ao backup automático." });
     }
 
-    // Resposta imediata para evitar timeout no cronjob da Vercel
-    res.json({ 
-        success: true, 
-        message: "Backup automático iniciado em segundo plano."
-    });
+    try {
+        // Na Vercel, precisamos aguardar a conclusão antes de enviar a resposta
+        const [membros, transacoes, igreja, config] = await Promise.all([
+            Membro.find({}).lean(),
+            Transacao.find({}).lean(),
+            Igreja.findOne({}).lean(),
+            Config.findOne({}).lean()
+        ]);
 
-    // Processamento em Background
-    (async () => {
-        try {
-            const [membros, transacoes, igreja, config] = await Promise.all([
-                Membro.find({}).lean(),
-                Transacao.find({}).lean(),
-                Igreja.findOne({}).lean(),
-                Config.findOne({}).lean()
-            ]);
+        const backupData = {
+            dataBackup: new Date().toISOString(),
+            membros,
+            transacoes,
+            igreja: igreja || {},
+            config: config || {}
+        };
 
-            const backupData = {
-                dataBackup: new Date().toISOString(),
-                membros,
-                transacoes,
-                igreja: igreja || {},
-                config: config || {}
-            };
+        const jsonString = JSON.stringify(backupData, null, 2);
+        const bufferStream = new stream.PassThrough();
+        bufferStream.end(Buffer.from(jsonString));
 
-            const jsonString = JSON.stringify(backupData, null, 2);
-            const bufferStream = new stream.PassThrough();
-            bufferStream.end(Buffer.from(jsonString));
+        const fileName = `auto_backup_iadev_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
-            const fileName = `auto_backup_iadev_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-            const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+        const uploadedFile = await drive.files.create({
+            resource: {
+                name: fileName,
+                parents: folderId ? [folderId] : []
+            },
+            media: {
+                mimeType: 'application/json',
+                body: bufferStream
+            },
+            fields: 'id'
+        });
 
-            const uploadedFile = await drive.files.create({
-                resource: {
-                    name: fileName,
-                    parents: folderId ? [folderId] : []
-                },
-                media: {
-                    mimeType: 'application/json',
-                    body: bufferStream
-                },
-                fields: 'id'
-            });
+        await new Log({
+            usuarioId: 'sistema/cron',
+            acao: 'BACKUP',
+            metodo: 'GET',
+            recurso: '/api/backup/auto',
+            detalhes: { 
+                tipo: 'Automático', 
+                fileId: uploadedFile.data.id,
+                status: 'Concluído'
+            }
+        }).save();
 
-            await new Log({
-                usuarioId: 'sistema/cron',
-                acao: 'BACKUP',
-                metodo: 'GET',
-                recurso: '/api/backup/auto',
-                detalhes: { 
-                    tipo: 'Automático', 
-                    fileId: uploadedFile.data.id,
-                    status: 'Concluído'
-                }
-            }).save();
+        res.json({ 
+            success: true, 
+            message: "Backup automático concluído com sucesso.",
+            fileId: uploadedFile.data.id
+        });
 
-        } catch (error) {
-            console.error("Erro no backup automático assíncrono:", error);
-        }
-    })();
+    } catch (error) {
+        console.error("Erro no backup automático:", error);
+        res.status(500).json({ error: "Erro interno ao processar backup." });
+    }
 });
 
 router.post('/', verificarToken, async (req, res) => {
@@ -86,56 +85,56 @@ router.post('/', verificarToken, async (req, res) => {
         return res.status(403).json({ error: "Apenas o administrador mestre pode realizar backups." });
     }
 
-    res.json({ 
-        success: true, 
-        message: "Backup manual iniciado em segundo plano. O arquivo será enviado ao Google Drive em instantes."
-    });
+    try {
+        const [membros, transacoes, igreja, config] = await Promise.all([
+            Membro.find({}).lean(),
+            Transacao.find({}).lean(),
+            Igreja.findOne({}).lean(),
+            Config.findOne({}).lean()
+        ]);
 
-    (async () => {
-        try {
-            const [membros, transacoes, igreja, config] = await Promise.all([
-                Membro.find({}).lean(),
-                Transacao.find({}).lean(),
-                Igreja.findOne({}).lean(),
-                Config.findOne({}).lean()
-            ]);
+        const backupData = {
+            dataBackup: new Date().toISOString(),
+            membros,
+            transacoes,
+            igreja: igreja || {},
+            config: config || {}
+        };
 
-            const backupData = {
-                dataBackup: new Date().toISOString(),
-                membros,
-                transacoes,
-                igreja: igreja || {},
-                config: config || {}
-            };
+        const jsonString = JSON.stringify(backupData, null, 2);
+        const bufferStream = new stream.PassThrough();
+        bufferStream.end(Buffer.from(jsonString));
 
-            const jsonString = JSON.stringify(backupData, null, 2);
-            const bufferStream = new stream.PassThrough();
-            bufferStream.end(Buffer.from(jsonString));
+        const fileName = `backup_iadev_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
-            const fileName = `backup_iadev_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-            const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+        const fileMetadata = { name: fileName, parents: folderId ? [folderId] : [] };
+        const media = { mimeType: 'application/json', body: bufferStream };
 
-            const fileMetadata = { name: fileName, parents: folderId ? [folderId] : [] };
-            const media = { mimeType: 'application/json', body: bufferStream };
+        const uploadedFile = await drive.files.create({
+            resource: fileMetadata,
+            media: media,
+            fields: 'id, webViewLink'
+        });
 
-            const uploadedFile = await drive.files.create({
-                resource: fileMetadata,
-                media: media,
-                fields: 'id, webViewLink'
-            });
+        await new Log({
+            usuarioId: req.userId,
+            acao: 'BACKUP',
+            metodo: 'POST',
+            recurso: '/api/backup',
+            detalhes: { tipo: 'Manual', fileId: uploadedFile.data.id, link: uploadedFile.data.webViewLink, status: 'Concluído' }
+        }).save();
 
-            await new Log({
-                usuarioId: req.userId,
-                acao: 'BACKUP',
-                metodo: 'POST',
-                recurso: '/api/backup',
-                detalhes: { tipo: 'Manual', fileId: uploadedFile.data.id, link: uploadedFile.data.webViewLink, status: 'Concluído' }
-            }).save();
+        res.json({ 
+            success: true, 
+            message: "Backup manual concluído.",
+            fileId: uploadedFile.data.id
+        });
 
-        } catch (error) {
-            console.error("Erro no backup assíncrono:", error);
-        }
-    })();
+    } catch (error) {
+        console.error("Erro no backup manual:", error);
+        res.status(500).json({ error: "Falha ao gerar backup." });
+    }
 });
 
 router.get('/list', verificarToken, async (req, res) => {
