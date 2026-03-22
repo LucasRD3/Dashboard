@@ -10,6 +10,7 @@ const router = express.Router();
 const MASTER_USER = process.env.MASTER_USER || 'admin';
 const MASTER_PASS = process.env.MASTER_PASS || 'admin';
 const SECRET_KEY = process.env.SECRET_KEY || 'iadev_secret_default';
+const REFRESH_SECRET = process.env.REFRESH_SECRET || 'iadev_refresh_secret_default';
 
 router.get('/ping', (req, res) => res.json({ status: "online" }));
 
@@ -24,25 +25,32 @@ router.post('/login', async (req, res) => {
     
     const attemptLog = { metodo: 'POST', recurso: '/api/login', ip, userAgent: req.headers['user-agent'] };
 
+    // Login Master
     if (usuario.toLowerCase() === MASTER_USER.toLowerCase() && senha === MASTER_PASS) {
-        const token = jwt.sign({ id: usuario, nome: 'Mestre', permissoes: {} }, SECRET_KEY, { expiresIn: '24h' });
+        const payload = { id: usuario, nome: 'Mestre', permissoes: {} };
+        const token = jwt.sign(payload, SECRET_KEY, { expiresIn: '2h' });
+        const refreshToken = jwt.sign(payload, REFRESH_SECRET, { expiresIn: '7d' });
+
         await new Log({ ...attemptLog, usuarioId: 'Mestre', acao: 'LOGIN_SUCESSO', detalhes: { resumo: 'Login do Administrador Mestre' } }).save();
-        return res.json({ auth: true, token, isMaster: true, nome: 'Mestre' });
+        return res.json({ auth: true, token, refreshToken, isMaster: true, nome: 'Mestre' });
     }
     
     try {
-        // Otimização: Busca case-insensitive com índice e lean
         const admin = await Membro.findOne({ 
             usuario: { $regex: new RegExp(`^${usuario}$`, 'i') }, 
             isAdministrador: true 
         }).lean();
 
         if (admin && await bcrypt.compare(senha, admin.senha)) {
-            const token = jwt.sign({ id: admin._id, nome: admin.nome, permissoes: admin.permissoes || {} }, SECRET_KEY, { expiresIn: '24h' });
+            const payload = { id: admin._id, nome: admin.nome, permissoes: admin.permissoes || {} };
+            const token = jwt.sign(payload, SECRET_KEY, { expiresIn: '2h' });
+            const refreshToken = jwt.sign(payload, REFRESH_SECRET, { expiresIn: '7d' });
+
             await new Log({ ...attemptLog, usuarioId: admin.nome, acao: 'LOGIN_SUCESSO', detalhes: { resumo: `Login de ${admin.nome}` } }).save();
             return res.json({ 
                 auth: true, 
-                token, 
+                token,
+                refreshToken,
                 isMaster: false,
                 nome: admin.nome,
                 permissoes: admin.permissoes || {} 
@@ -53,6 +61,29 @@ router.post('/login', async (req, res) => {
     } catch (err) { return res.status(500).json({ error: "Erro interno" }); }
     
     res.status(401).json({ error: "Credenciais inválidas" });
+});
+
+// Nova rota para renovar o token de acesso usando o refresh token
+router.post('/refresh', async (req, res) => {
+    const { refreshToken } = req.body;
+    if (!refreshToken) return res.status(401).json({ error: "Refresh token não fornecido" });
+
+    jwt.verify(refreshToken, REFRESH_SECRET, (err, decoded) => {
+        if (err) return res.status(403).json({ error: "Refresh token inválido ou expirado" });
+
+        const newToken = jwt.sign(
+            { id: decoded.id, nome: decoded.nome, permissoes: decoded.permissoes },
+            SECRET_KEY,
+            { expiresIn: '2h' }
+        );
+
+        res.json({ 
+            token: newToken, 
+            nome: decoded.nome, 
+            isMaster: decoded.id === MASTER_USER,
+            permissoes: decoded.permissoes 
+        });
+    });
 });
 
 router.post('/verify-master', verificarToken, (req, res) => {
