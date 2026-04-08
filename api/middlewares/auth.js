@@ -1,9 +1,36 @@
 // Dashboard/api/middlewares/auth.js
 const jwt = require('jsonwebtoken');
 const Log = require('../models/Log');
+const UAParser = require('ua-parser-js');
+const geoip = require('geoip-lite');
 
 const SECRET_KEY = process.env.SECRET_KEY || 'iadev_secret_default';
 const MASTER_USER = process.env.MASTER_USER || 'admin';
+
+// Função recursiva de sanitização mais robusta
+const sanitizarDados = (obj) => {
+    if (obj === null || typeof obj !== 'object') {
+        return obj;
+    }
+
+    if (Array.isArray(obj)) {
+        return obj.map(item => sanitizarDados(item));
+    }
+
+    const copia = { ...obj };
+    const camposSensiveis = ['senha', 'fotoPerfil', 'comprovante', 'permissoes', 'token', 'password', 'creditcard'];
+
+    for (const key in copia) {
+        if (Object.prototype.hasOwnProperty.call(copia, key)) {
+            if (camposSensiveis.some(sensivel => key.toLowerCase().includes(sensivel.toLowerCase()))) {
+                copia[key] = '[REDIGIDO]';
+            } else if (typeof copia[key] === 'object') {
+                copia[key] = sanitizarDados(copia[key]);
+            }
+        }
+    }
+    return copia;
+};
 
 const verificarToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -16,6 +43,7 @@ const verificarToken = (req, res, next) => {
         req.userNome = decoded.nome || decoded.id;
         req.isMaster = (decoded.id === MASTER_USER);
         req.permissoes = decoded.permissoes || {};
+        req.sessionId = decoded.sessionId || decoded.jti || 'sessao_nao_identificada';
         next();
     });
 };
@@ -26,13 +54,28 @@ const checkPerm = (permName) => {
         if (req.permissoes && req.permissoes[permName] === true) return next(); 
         
         const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        const parser = new UAParser(req.headers['user-agent']);
+        const geo = geoip.lookup(ip) || {};
+
         await new Log({
             usuarioId: req.userNome || 'anonimo',
+            sessionId: req.sessionId,
             acao: 'ACESSO_NEGADO',
             metodo: req.method,
             recurso: req.originalUrl,
             nivel: 'SECURITY',
             detalhes: { permissaoRequerida: permName, resumo: `Tentativa de acesso sem a permissão: ${permName}` },
+            dispositivo: {
+                browserName: parser.getBrowser().name || 'Desconhecido',
+                browserVersion: parser.getBrowser().version || '',
+                osName: parser.getOS().name || 'Desconhecido',
+                deviceType: parser.getDevice().type || 'Desktop'
+            },
+            geo: {
+                country: geo.country || 'Desconhecido',
+                region: geo.region || 'Desconhecido',
+                city: geo.city || 'Desconhecido'
+            },
             ip: ip,
             userAgent: req.headers['user-agent']
         }).save();
@@ -67,25 +110,44 @@ const registrarAuditoria = async (req, res, next) => {
                         if (method === 'PUT') resumo = `${req.userNome} alterou dados de: ${body.nome || target}`;
                     }
 
-                    const detalhes = { 
+                    const detalhesNaoSanitizados = { 
                         ...(method !== 'DELETE' ? { ...body } : { id: params.id }),
-                        resumo: resumo 
+                        resumo: resumo,
+                        erro: res.locals.errorMessage || undefined
                     };
                     
-                    const sensitive = ['senha', 'fotoPerfil', 'comprovante', 'permissoes'];
-                    sensitive.forEach(f => delete detalhes[f]);
+                    const detalhesSanitizados = sanitizarDados(detalhesNaoSanitizados);
+                    const estadoAnteriorSanitizado = sanitizarDados(res.locals.estadoAnterior);
+                    const estadoNovoSanitizado = sanitizarDados(res.locals.estadoNovo || body);
+
+                    const parser = new UAParser(headers['user-agent']);
+                    const geo = geoip.lookup(ip) || {};
 
                     await new Log({
                         usuarioId: req.userNome || 'sistema/anonimo',
+                        sessionId: req.sessionId,
                         acao: acaoDesc,
                         metodo: method,
                         recurso: originalUrl,
                         statusCode: res.statusCode,
                         responseTime: duration,
-                        nivel: res.statusCode >= 400 ? 'WARN' : 'INFO',
+                        nivel: res.statusCode >= 400 ? (res.statusCode >= 500 ? 'ERROR' : 'WARN') : 'INFO',
                         tipoEntidade: res.locals.tipoEntidade,
                         entidadeId: res.locals.entidadeId || params.id,
-                        detalhes: detalhes,
+                        detalhes: detalhesSanitizados,
+                        estadoAnterior: estadoAnteriorSanitizado,
+                        estadoNovo: method === 'PUT' || method === 'POST' ? estadoNovoSanitizado : undefined,
+                        dispositivo: {
+                            browserName: parser.getBrowser().name || 'Desconhecido',
+                            browserVersion: parser.getBrowser().version || '',
+                            osName: parser.getOS().name || 'Desconhecido',
+                            deviceType: parser.getDevice().type || 'Desktop'
+                        },
+                        geo: {
+                            country: geo.country || 'Desconhecido',
+                            region: geo.region || 'Desconhecido',
+                            city: geo.city || 'Desconhecido'
+                        },
                         ip: ip,
                         userAgent: headers['user-agent']
                     }).save();
