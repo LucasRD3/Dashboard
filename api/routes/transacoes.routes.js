@@ -79,6 +79,9 @@ router.post('/', verificarToken, upload.single('comprovante'), async (req, res) 
             data: new Date(req.body.dataManual),
             comprovanteUrl: req.file ? req.file.path : null
         }).save();
+        
+        res.locals.estadoNovo = nova.toObject();
+        
         res.status(201).json(nova);
     } catch (err) {
         res.status(500).json({ error: "Erro ao salvar transação" });
@@ -88,6 +91,12 @@ router.post('/', verificarToken, upload.single('comprovante'), async (req, res) 
 router.put('/:id', verificarToken, checkPerm('allowEditTransaction'), async (req, res) => {
     try {
         res.locals.auditTarget = req.body.descricao;
+        
+        const estadoAnterior = await Transacao.findById(req.params.id).lean();
+        if (estadoAnterior) {
+            res.locals.estadoAnterior = estadoAnterior;
+        }
+
         const atualizada = await Transacao.findByIdAndUpdate(
             req.params.id,
             {
@@ -97,7 +106,12 @@ router.put('/:id', verificarToken, checkPerm('allowEditTransaction'), async (req
                 data: new Date(req.body.dataManual)
             },
             { new: true }
-        );
+        ).lean();
+        
+        if (atualizada) {
+            res.locals.estadoNovo = atualizada;
+        }
+
         res.json(atualizada);
     } catch (err) {
         res.status(500).json({ error: "Erro ao atualizar" });
@@ -106,9 +120,11 @@ router.put('/:id', verificarToken, checkPerm('allowEditTransaction'), async (req
 
 router.delete('/:id', verificarToken, checkPerm('allowDeleteTransaction'), async (req, res) => {
     try {
-        const transacao = await Transacao.findById(req.params.id);
+        const transacao = await Transacao.findById(req.params.id).lean();
         if (transacao) {
             res.locals.auditTarget = transacao.descricao;
+            res.locals.estadoAnterior = transacao;
+            
             await Transacao.findByIdAndDelete(req.params.id);
             if (transacao.comprovanteUrl) {
                 const publicId = `comprovantes/${transacao.comprovanteUrl.split('/').pop().split('.')[0]}`;
