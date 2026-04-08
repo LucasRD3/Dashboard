@@ -10,23 +10,15 @@ const router = express.Router();
 router.get('/archive', async (req, res) => {
     const { key } = req.query;
     const CRON_SECRET = process.env.CRON_SECRET;
-
     if (!CRON_SECRET || key !== CRON_SECRET) {
-        return res.status(401).json({ error: "Acesso não autorizado ao arquivamento automático." });
+        return res.status(401).json({ error: "Acesso não autorizado." });
     }
-
     try {
-        // Aguarda a conclusão total (Upload + Eliminação) antes de responder
         const resultado = await archiveOldLogs();
-        
-        res.json({ 
-            success: true, 
-            message: "Arquivamento concluído com sucesso.",
-            detalhes: resultado 
-        });
+        res.json({ success: true, detalhes: resultado });
     } catch (error) {
-        console.error("Erro no arquivamento de logs:", error);
-        res.status(500).json({ error: "Erro ao processar arquivamento.", message: error.message });
+        console.error("Erro no arquivamento:", error);
+        res.status(500).json({ error: "Erro ao processar arquivamento." });
     }
 });
 
@@ -43,7 +35,6 @@ router.get('/archive/list', verificarToken, async (req, res) => {
         });
         res.json(response.data.files || []);
     } catch (error) {
-        console.error("Erro ao listar logs arquivados:", error);
         res.status(500).json({ error: "Erro ao listar arquivos do Drive." });
     }
 });
@@ -57,17 +48,30 @@ router.get('/archive/:fileId', verificarToken, async (req, res) => {
         const response = await drive.files.get({ fileId, alt: 'media' });
         res.json(response.data);
     } catch (error) {
-        console.error("Erro ao recuperar log arquivado:", error);
         res.status(500).json({ error: "Erro ao recuperar arquivo do Drive." });
     }
 });
 
+// RESOLVIDO: Rota agora suporta filtros complexos direto no MongoDB
 router.get('/', verificarToken, async (req, res) => {
     if (!req.isMaster && (!req.permissoes || req.permissoes.allowViewLogs !== true)) {
-        return res.status(403).json({ error: "Acesso negado. Você não tem permissão para visualizar logs." });
+        return res.status(403).json({ error: "Acesso negado." });
     }
     try {
-        const logs = await Log.find({}).sort({ timestamp: -1 }).limit(100).lean();
+        const { usuario, acao, nivel, inicio, fim } = req.query;
+        let query = {};
+
+        if (usuario) query.usuarioId = { $regex: usuario, $options: 'i' };
+        if (acao && acao !== 'todos') query.acao = acao;
+        if (nivel && nivel !== 'todos') query.nivel = nivel;
+        if (inicio || fim) {
+            query.timestamp = {};
+            if (inicio) query.timestamp.$gte = new Date(inicio + 'T00:00:00');
+            if (fim) query.timestamp.$lte = new Date(fim + 'T23:59:59');
+        }
+
+        // Limite de 500 para garantir que o administrador veja o histórico recente sem "limbo"
+        const logs = await Log.find(query).sort({ timestamp: -1 }).limit(500).lean();
         res.json(logs);
     } catch (err) {
         res.status(500).json({ error: "Erro ao buscar logs" });
