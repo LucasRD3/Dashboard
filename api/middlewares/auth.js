@@ -136,7 +136,7 @@ const registrarAuditoria = async (req, res, next) => {
                         entidadeId: res.locals.entidadeId || params.id,
                         detalhes: detalhesSanitizados,
                         estadoAnterior: estadoAnteriorSanitizado,
-                        estadoNovo: method === 'PUT' || method === 'POST' ? estadoNovoSanitizado : undefined,
+                        estadoNovo: method === 'PUT' ? estadoNovoSanitizado : undefined,
                         dispositivo: {
                             browserName: parser.getBrowser().name || 'Desconhecido',
                             browserVersion: parser.getBrowser().version || '',
