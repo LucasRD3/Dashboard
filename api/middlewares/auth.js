@@ -90,7 +90,6 @@ const registrarAuditoria = async (req, res, next) => {
     const ip = headers['x-forwarded-for'] || req.socket.remoteAddress;
 
     res.on('finish', () => {
-        // setImmediate garante que o log seja processado logo após a resposta ser enviada ao cliente
         setImmediate(async () => {
             const duration = Date.now() - startTime;
             const ignoreUrls = ['/api/ping', '/api/logs', '/api/config', '/api/login'];
@@ -110,16 +109,46 @@ const registrarAuditoria = async (req, res, next) => {
                         if (method === 'PUT') resumo = `${req.userNome} alterou dados de: ${body.nome || target}`;
                     }
 
-                    const detalhesNaoSanitizados = { 
-                        ...(method !== 'DELETE' ? { ...body } : { id: params.id }),
+                    // Preparação de dados para o log
+                    let dadosPrincipais = { ...body };
+                    let estadoAnterior = res.locals.estadoAnterior;
+                    let estadoNovo = res.locals.estadoNovo || body;
+
+                    // Lógica específica para Transações
+                    if (originalUrl.includes('/transacoes')) {
+                        const filtrarTransacao = (obj) => {
+                            if (!obj) return undefined;
+                            return {
+                                descricao: obj.descricao,
+                                valor: obj.valor,
+                                tipo: obj.tipo,
+                                data: obj.data || obj.dataManual
+                            };
+                        };
+
+                        // Filtra o corpo enviado no Cadastro ou Edição
+                        if (method === 'POST' || method === 'PUT') {
+                            dadosPrincipais = {
+                                descricao: body.descricao,
+                                valor: body.valor,
+                                tipo: body.tipo,
+                                dataManual: body.dataManual
+                            };
+                        }
+
+                        // Filtra os estados apenas na Alteração (PUT)
+                        if (method === 'PUT') {
+                            estadoAnterior = filtrarTransacao(estadoAnterior);
+                            estadoNovo = filtrarTransacao(estadoNovo);
+                        }
+                    }
+
+                    const detalhesSanitizados = sanitizarDados({ 
+                        ...(method !== 'DELETE' ? dadosPrincipais : { id: params.id }),
                         resumo: resumo,
                         erro: res.locals.errorMessage || undefined
-                    };
+                    });
                     
-                    const detalhesSanitizados = sanitizarDados(detalhesNaoSanitizados);
-                    const estadoAnteriorSanitizado = sanitizarDados(res.locals.estadoAnterior);
-                    const estadoNovoSanitizado = sanitizarDados(res.locals.estadoNovo || body);
-
                     const parser = new UAParser(headers['user-agent']);
                     const geo = geoip.lookup(ip) || {};
 
@@ -135,8 +164,8 @@ const registrarAuditoria = async (req, res, next) => {
                         tipoEntidade: res.locals.tipoEntidade,
                         entidadeId: res.locals.entidadeId || params.id,
                         detalhes: detalhesSanitizados,
-                        estadoAnterior: estadoAnteriorSanitizado,
-                        estadoNovo: method === 'PUT' ? estadoNovoSanitizado : undefined,
+                        estadoAnterior: sanitizarDados(estadoAnterior),
+                        estadoNovo: method === 'PUT' ? sanitizarDados(estadoNovo) : undefined,
                         dispositivo: {
                             browserName: parser.getBrowser().name || 'Desconhecido',
                             browserVersion: parser.getBrowser().version || '',
