@@ -1,3 +1,4 @@
+// Dashboard/api/routes/auth.routes.js
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
@@ -25,7 +26,6 @@ router.post('/login', async (req, res) => {
     
     const attemptLog = { metodo: 'POST', recurso: '/api/login', ip, userAgent: req.headers['user-agent'] };
 
-    // Login Master
     if (usuario.toLowerCase() === MASTER_USER.toLowerCase() && senha === MASTER_PASS) {
         const payload = { id: usuario, nome: 'Mestre', permissoes: {} };
         const token = jwt.sign(payload, SECRET_KEY, { expiresIn: '2h' });
@@ -63,7 +63,6 @@ router.post('/login', async (req, res) => {
     res.status(401).json({ error: "Credenciais inválidas" });
 });
 
-// Nova rota para renovar o token de acesso usando o refresh token
 router.post('/refresh', async (req, res) => {
     const { refreshToken } = req.body;
     if (!refreshToken) return res.status(401).json({ error: "Refresh token não fornecido" });
@@ -92,10 +91,6 @@ router.post('/verify-master', verificarToken, (req, res) => {
         return res.json({ success: true });
     }
     res.status(401).json({ error: "Senha mestre incorreta" });
-});
-
-router.get('/config', verificarToken, async (req, res) => {
-    res.json({}); 
 });
 
 module.exports = router;

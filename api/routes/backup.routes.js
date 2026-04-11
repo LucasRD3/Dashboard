@@ -7,7 +7,6 @@ const { verificarToken } = require('../middlewares/auth');
 const Membro = require('../models/Membro');
 const Transacao = require('../models/Transacao');
 const Igreja = require('../models/Igreja');
-const Config = require('../models/Config');
 const Log = require('../models/Log');
 
 const router = express.Router();
@@ -21,20 +20,17 @@ router.get('/auto', async (req, res) => {
     }
 
     try {
-        // Na Vercel, precisamos aguardar a conclusão antes de enviar a resposta
-        const [membros, transacoes, igreja, config] = await Promise.all([
+        const [membros, transacoes, igreja] = await Promise.all([
             Membro.find({}).lean(),
             Transacao.find({}).lean(),
-            Igreja.findOne({}).lean(),
-            Config.findOne({}).lean()
+            Igreja.findOne({}).lean()
         ]);
 
         const backupData = {
             dataBackup: new Date().toISOString(),
             membros,
             transacoes,
-            igreja: igreja || {},
-            config: config || {}
+            igreja: igreja || {}
         };
 
         const jsonString = JSON.stringify(backupData, null, 2);
@@ -49,10 +45,7 @@ router.get('/auto', async (req, res) => {
                 name: fileName,
                 parents: folderId ? [folderId] : []
             },
-            media: {
-                mimeType: 'application/json',
-                body: bufferStream
-            },
+            media: { mimeType: 'application/json', body: bufferStream },
             fields: 'id'
         });
 
@@ -61,44 +54,30 @@ router.get('/auto', async (req, res) => {
             acao: 'BACKUP',
             metodo: 'GET',
             recurso: '/api/backup/auto',
-            detalhes: { 
-                tipo: 'Automático', 
-                fileId: uploadedFile.data.id,
-                status: 'Concluído'
-            }
+            detalhes: { tipo: 'Automático', fileId: uploadedFile.data.id, status: 'Concluído' }
         }).save();
 
-        res.json({ 
-            success: true, 
-            message: "Backup automático concluído com sucesso.",
-            fileId: uploadedFile.data.id
-        });
-
+        res.json({ success: true, fileId: uploadedFile.data.id });
     } catch (error) {
-        console.error("Erro no backup automático:", error);
         res.status(500).json({ error: "Erro interno ao processar backup." });
     }
 });
 
 router.post('/', verificarToken, async (req, res) => {
-    if (!req.isMaster) {
-        return res.status(403).json({ error: "Apenas o administrador mestre pode realizar backups." });
-    }
+    if (!req.isMaster) return res.status(403).json({ error: "Apenas o mestre pode realizar backups." });
 
     try {
-        const [membros, transacoes, igreja, config] = await Promise.all([
+        const [membros, transacoes, igreja] = await Promise.all([
             Membro.find({}).lean(),
             Transacao.find({}).lean(),
-            Igreja.findOne({}).lean(),
-            Config.findOne({}).lean()
+            Igreja.findOne({}).lean()
         ]);
 
         const backupData = {
             dataBackup: new Date().toISOString(),
             membros,
             transacoes,
-            igreja: igreja || {},
-            config: config || {}
+            igreja: igreja || {}
         };
 
         const jsonString = JSON.stringify(backupData, null, 2);
@@ -108,12 +87,9 @@ router.post('/', verificarToken, async (req, res) => {
         const fileName = `backup_iadev_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
         const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
-        const fileMetadata = { name: fileName, parents: folderId ? [folderId] : [] };
-        const media = { mimeType: 'application/json', body: bufferStream };
-
         const uploadedFile = await drive.files.create({
-            resource: fileMetadata,
-            media: media,
+            resource: { name: fileName, parents: folderId ? [folderId] : [] },
+            media: { mimeType: 'application/json', body: bufferStream },
             fields: 'id, webViewLink'
         });
 
@@ -125,14 +101,8 @@ router.post('/', verificarToken, async (req, res) => {
             detalhes: { tipo: 'Manual', fileId: uploadedFile.data.id, link: uploadedFile.data.webViewLink, status: 'Concluído' }
         }).save();
 
-        res.json({ 
-            success: true, 
-            message: "Backup manual concluído.",
-            fileId: uploadedFile.data.id
-        });
-
+        res.json({ success: true, fileId: uploadedFile.data.id });
     } catch (error) {
-        console.error("Erro no backup manual:", error);
         res.status(500).json({ error: "Falha ao gerar backup." });
     }
 });
@@ -149,11 +119,7 @@ router.get('/list', verificarToken, async (req, res) => {
             }),
             drive.about.get({ fields: 'storageQuota' })
         ]);
-        
-        res.json({ 
-            files: response.data.files,
-            quota: about.data.storageQuota
-        });
+        res.json({ files: response.data.files, quota: about.data.storageQuota });
     } catch (error) {
         res.status(500).json({ error: "Erro ao listar arquivos do Drive." });
     }
@@ -169,14 +135,12 @@ router.post('/restore/:fileId', verificarToken, async (req, res) => {
         await Promise.all([
             Membro.deleteMany({}),
             Transacao.deleteMany({}),
-            Igreja.deleteMany({}),
-            Config.deleteMany({})
+            Igreja.deleteMany({})
         ]);
 
         if (backupData.membros?.length) await Membro.insertMany(backupData.membros);
         if (backupData.transacoes?.length) await Transacao.insertMany(backupData.transacoes);
         if (backupData.igreja) await new Igreja(backupData.igreja).save();
-        if (backupData.config) await new Config(backupData.config).save();
 
         await new Log({
             usuarioId: req.userId,
