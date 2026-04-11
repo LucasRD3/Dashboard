@@ -6,7 +6,7 @@ const drive = require('../config/googleDrive');
 const archiveOldLogs = async () => {
     // RESOLVIDO: Filtro alterado para logs com mais de 30 dias (evita esvaziar o banco por engano)
     const limiteData = new Date();
-    limiteData.setDate(limiteData.getDate() - 1);
+    limiteData.setDate(limiteData.getDate() - 0);
 
     // Busca os logs mais antigos (limite de 2000 para segurança de memória na Vercel)
     const logsParaArquivar = await Log.find({ 
